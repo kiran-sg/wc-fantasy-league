@@ -1,9 +1,0 @@
-spring:
-  datasource:
-    url: jdbc:postgresql://${PGHOST}:${PGPORT:5432}/${PGDATABASE:railway}
-    username: ${PGUSER:postgres}
-    password: ${PGPASSWORD:postgres}
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
