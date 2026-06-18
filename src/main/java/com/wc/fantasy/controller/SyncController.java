@@ -1,5 +1,6 @@
 package com.wc.fantasy.controller;
 
+import com.wc.fantasy.repository.*;
 import com.wc.fantasy.service.DataSyncService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +14,21 @@ import java.util.Map;
 public class SyncController {
 
     private final DataSyncService dataSyncService;
+    private final MatchPlayerStatsRepository statsRepo;
+    private final UserSquadRepository squadRepo;
+    private final PlayerRepository playerRepo;
+    private final MatchRepository matchRepo;
+    private final TeamRepository teamRepo;
+
+    @GetMapping("/reset")
+    public Map<String, Object> reset() {
+        statsRepo.deleteAll();
+        squadRepo.deleteAll();
+        playerRepo.deleteAll();
+        matchRepo.deleteAll();
+        teamRepo.deleteAll();
+        return Map.of("status", "reset complete");
+    }
 
     @GetMapping("/all")
     public Map<String, Object> syncAll() {

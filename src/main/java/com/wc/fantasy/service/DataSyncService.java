@@ -147,8 +147,7 @@ public class DataSyncService {
         teamRepo.findAll().forEach(t -> { if (t.getCode() != null) codeToTeam.put(t.getCode(), t); });
 
         if (matchRepo.count() > 0) {
-            log.info("Matches already exist, skipping");
-            return (int) matchRepo.count();
+            matchRepo.deleteAll();
         }
 
         int count = 0;
@@ -180,10 +179,7 @@ public class DataSyncService {
     }
 
     public int syncPlayers() {
-        if (playerRepo.count() > 0) {
-            log.info("Players already exist, skipping");
-            return (int) playerRepo.count();
-        }
+        playerRepo.deleteAll();
 
         // Get ESPN team IDs from teams page
         String html = webClient().get().uri(ESPN_TEAMS_URL).retrieve().bodyToMono(String.class).block();
