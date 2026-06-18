@@ -31,6 +31,11 @@ public class AdminController {
         return dataSyncService.syncAll();
     }
 
+    @GetMapping("/hello")
+    public String hello() {
+        return "hello";
+    }
+
     @GetMapping("/sync-teams")
     public Map<String, Object> syncTeams() {
         return Map.of("teams", dataSyncService.syncTeams());
