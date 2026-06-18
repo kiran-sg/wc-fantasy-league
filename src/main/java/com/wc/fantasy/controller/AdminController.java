@@ -26,7 +26,7 @@ public class AdminController {
     private final EspnScraperService scraperService;
     private final DataSyncService dataSyncService;
 
-    @PostMapping("/sync-data")
+    @RequestMapping(value = "/sync-data", method = {RequestMethod.GET, RequestMethod.POST})
     public Map<String, Object> syncData() {
         return dataSyncService.syncAll();
     }
