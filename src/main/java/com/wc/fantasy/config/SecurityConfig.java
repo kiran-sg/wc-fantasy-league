@@ -33,9 +33,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**", "/h2-console/**").permitAll()
+                        .requestMatchers("/api/auth/**", "/h2-console/**", "/api/admin/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/matches/**", "/api/teams/**", "/api/players/**", "/api/leaderboard/**").permitAll()
-                        .requestMatchers("/api/admin/**").permitAll()
                         .requestMatchers("/api/**").authenticated()
                 )
                 .headers(h -> h.frameOptions(f -> f.disable()))
