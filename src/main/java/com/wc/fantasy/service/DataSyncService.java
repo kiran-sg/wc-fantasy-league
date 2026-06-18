@@ -73,8 +73,21 @@ public class DataSyncService {
     private WebClient webClient() {
         return WebClient.builder()
                 .defaultHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .defaultHeader("Accept", "application/json")
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                 .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> fetchList(String url) {
+        try {
+            String json = webClient().get().uri(url).retrieve().bodyToMono(String.class).block();
+            if (json == null) return null;
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, List.class);
+        } catch (Exception e) {
+            log.error("Failed to fetch {}: {}", url, e.getMessage());
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -87,8 +100,7 @@ public class DataSyncService {
 
     @SuppressWarnings("unchecked")
     public int syncTeams() {
-        List<Map<String, Object>> teams = webClient().get().uri(TEAMS_URL)
-                .retrieve().bodyToMono(List.class).block();
+        List<Map<String, Object>> teams = fetchList(TEAMS_URL);
         if (teams == null) return 0;
 
         int count = 0;
@@ -121,9 +133,9 @@ public class DataSyncService {
 
     @SuppressWarnings("unchecked")
     public int syncMatches() {
-        List<Map<String, Object>> teamsData = webClient().get().uri(TEAMS_URL).retrieve().bodyToMono(List.class).block();
-        List<Map<String, Object>> stadiums = webClient().get().uri(STADIUMS_URL).retrieve().bodyToMono(List.class).block();
-        List<Map<String, Object>> matches = webClient().get().uri(MATCHES_URL).retrieve().bodyToMono(List.class).block();
+        List<Map<String, Object>> teamsData = fetchList(TEAMS_URL);
+        List<Map<String, Object>> stadiums = fetchList(STADIUMS_URL);
+        List<Map<String, Object>> matches = fetchList(MATCHES_URL);
         if (teamsData == null || stadiums == null || matches == null) return 0;
 
         Map<String, String> teamIdToCode = new HashMap<>();
