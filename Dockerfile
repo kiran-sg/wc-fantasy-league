@@ -8,5 +8,5 @@ RUN mvn clean package -DskipTests -B
 FROM eclipse-temurin:17-jre AS runtime
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
-EXPOSE 8081
+EXPOSE 8080
 CMD ["java", "-Duser.timezone=UTC", "-Dspring.profiles.active=prod", "-jar", "app.jar"]
