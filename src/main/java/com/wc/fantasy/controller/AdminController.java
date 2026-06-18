@@ -31,6 +31,21 @@ public class AdminController {
         return dataSyncService.syncAll();
     }
 
+    @GetMapping("/sync-teams")
+    public Map<String, Object> syncTeams() {
+        return Map.of("teams", dataSyncService.syncTeams());
+    }
+
+    @GetMapping("/sync-matches")
+    public Map<String, Object> syncMatches() {
+        return Map.of("matches", dataSyncService.syncMatches());
+    }
+
+    @GetMapping("/sync-players")
+    public Map<String, Object> syncPlayers() {
+        return Map.of("players", dataSyncService.syncPlayers());
+    }
+
     @PostMapping("/update-scores/{matchId}")
     public Map<String, Object> updateScores(@PathVariable Long matchId) {
         Match match = matchRepo.findById(matchId).orElseThrow(() -> new IllegalArgumentException("Match not found"));
