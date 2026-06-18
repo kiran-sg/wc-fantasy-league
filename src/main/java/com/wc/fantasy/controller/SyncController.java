@@ -22,8 +22,6 @@ public class SyncController {
 
     @GetMapping("/reset")
     public Map<String, Object> reset() {
-        statsRepo.deleteAll();
-        squadRepo.deleteAll();
         playerRepo.deleteAll();
         matchRepo.deleteAll();
         teamRepo.deleteAll();
