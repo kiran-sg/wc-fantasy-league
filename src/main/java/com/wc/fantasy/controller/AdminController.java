@@ -3,7 +3,6 @@ package com.wc.fantasy.controller;
 import com.wc.fantasy.model.*;
 import com.wc.fantasy.repository.*;
 import com.wc.fantasy.service.EspnScraperService;
-import com.wc.fantasy.service.DataSyncService;
 import com.wc.fantasy.service.SquadService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,32 +23,6 @@ public class AdminController {
     private final UserSquadRepository squadRepo;
     private final SquadService squadService;
     private final EspnScraperService scraperService;
-    private final DataSyncService dataSyncService;
-
-    @RequestMapping(value = "/sync-data", method = {RequestMethod.GET, RequestMethod.POST})
-    public Map<String, Object> syncData() {
-        return dataSyncService.syncAll();
-    }
-
-    @GetMapping("/hello")
-    public String hello() {
-        return "hello";
-    }
-
-    @GetMapping("/sync-teams")
-    public Map<String, Object> syncTeams() {
-        return Map.of("teams", dataSyncService.syncTeams());
-    }
-
-    @GetMapping("/sync-matches")
-    public Map<String, Object> syncMatches() {
-        return Map.of("matches", dataSyncService.syncMatches());
-    }
-
-    @GetMapping("/sync-players")
-    public Map<String, Object> syncPlayers() {
-        return Map.of("players", dataSyncService.syncPlayers());
-    }
 
     @PostMapping("/update-scores/{matchId}")
     public Map<String, Object> updateScores(@PathVariable Long matchId) {
