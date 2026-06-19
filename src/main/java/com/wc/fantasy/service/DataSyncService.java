@@ -218,16 +218,23 @@ public class DataSyncService {
         try {
             String html = webClient().get().uri(ESPN_SQUAD_URL + espnTeamId)
                     .retrieve().bodyToMono(String.class).block();
-            if (html == null) return List.of();
+            if (html == null || html.isEmpty()) {
+                log.warn("Empty response for squad {}", espnTeamId);
+                return List.of();
+            }
 
             List<String[]> players = new ArrayList<>();
             Set<String> seen = new HashSet<>();
-            Matcher m = Pattern.compile("\"name\":\"([^\"]+)\",\"href\":\"https://www\\.espn\\.com/soccer/player/_/id/(\\d+)/[^\"]*\"[^}]*\"position\":\"([GDMF])\"").matcher(html);
+            // Match JSON embedded player data
+            Matcher m = Pattern.compile("\"name\":\"([^\"]+)\",\"href\":\"[^\"]*soccer/player/_/id/(\\d+)/[^\"]*\"[^}]{0,500}\"position\":\"([GDMF])\"").matcher(html);
             while (m.find()) {
                 String name = m.group(1);
                 String pid = m.group(2);
                 String pos = POS_MAP.getOrDefault(m.group(3), "MID");
                 if (seen.add(pid)) players.add(new String[]{name, pos});
+            }
+            if (players.isEmpty()) {
+                log.warn("No players matched for team {} (html length: {})", espnTeamId, html.length());
             }
             return players;
         } catch (Exception e) {
