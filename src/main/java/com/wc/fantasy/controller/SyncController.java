@@ -79,21 +79,34 @@ public class SyncController {
                 .findFirst().orElse(null);
         if (match == null) return Map.of("error", "England vs Croatia not found");
 
+        // Clear existing squad for this match
+        squadRepo.findByUserIdAndMatchId(user.getId(), match.getId()).ifPresent(squadRepo::delete);
+
         var eng = playerRepo.findByTeamId(match.getTeamA().getId());
         var cro = playerRepo.findByTeamId(match.getTeamB().getId());
-        if (eng.size() < 8 || cro.size() < 3) return Map.of("error", "not enough players");
+
+        // Pick by position: 1 GK, 4 DEF, 3 MID, 3 FWD
+        var players = new java.util.ArrayList<com.wc.fantasy.model.Player>();
+        players.addAll(eng.stream().filter(p -> "GK".equals(p.getPosition())).limit(1).toList());
+        players.addAll(eng.stream().filter(p -> "DEF".equals(p.getPosition())).limit(3).toList());
+        players.addAll(cro.stream().filter(p -> "DEF".equals(p.getPosition())).limit(1).toList());
+        players.addAll(eng.stream().filter(p -> "MID".equals(p.getPosition())).limit(2).toList());
+        players.addAll(cro.stream().filter(p -> "MID".equals(p.getPosition())).limit(1).toList());
+        players.addAll(eng.stream().filter(p -> "FWD".equals(p.getPosition())).limit(2).toList());
+        players.addAll(cro.stream().filter(p -> "FWD".equals(p.getPosition())).limit(1).toList());
+
+        var captain = eng.stream().filter(p -> p.getName().contains("Kane")).findFirst().orElse(players.get(0));
 
         var squad = new com.wc.fantasy.model.UserSquad();
         squad.setUser(user);
         squad.setMatch(match);
-        var players = new java.util.ArrayList<>(eng.subList(0, 8));
-        players.addAll(cro.subList(0, 3));
         squad.setPlayers(players);
-        squad.setCaptain(eng.stream().filter(p -> p.getName().contains("Kane")).findFirst().orElse(eng.get(0)));
+        squad.setCaptain(captain);
         squad.setPointsEarned(0);
         squad.setLocked(true);
         squadRepo.save(squad);
 
-        return Map.of("status", "squad created", "matchId", match.getId(), "captain", squad.getCaptain().getName(), "players", players.size());
+        return Map.of("status", "squad created", "matchId", match.getId(), "captain", captain.getName(),
+                "players", players.stream().map(p -> p.getName() + " (" + p.getPosition() + ")").toList());
     }
 }
