@@ -30,31 +30,25 @@ public class AdminController {
 
     // ── User management ──────────────────────────────────────────────────────
 
-    public record UserRequest(String username, String displayName, String location, Boolean isAdmin) {}
-
     @GetMapping("/users")
     public List<com.wc.fantasy.model.AppUser> listUsers() {
         return userRepo.findAll();
     }
 
     @PostMapping("/users")
-    public Map<String, Object> addUsers(@RequestBody List<UserRequest> requests) {
-        List<String> created = new ArrayList<>();
-        List<String> existing = new ArrayList<>();
-        for (UserRequest req : requests) {
-            if (userRepo.findByUsername(req.username()).isPresent()) {
-                existing.add(req.username());
-            } else {
-                com.wc.fantasy.model.AppUser u = new com.wc.fantasy.model.AppUser();
-                u.setUsername(req.username());
-                u.setDisplayName(req.displayName() != null ? req.displayName() : req.username());
-                u.setLocation(req.location());
-                u.setIsAdmin(Boolean.TRUE.equals(req.isAdmin()));
-                userRepo.save(u);
-                created.add(req.username());
-            }
-        }
-        return Map.of("created", created, "alreadyExisted", existing);
+    public Map<String, Object> createUser(@RequestBody Map<String, String> body) {
+        String username = body.get("username");
+        if (username == null || username.isBlank())
+            return Map.of("status", "error", "message", "Username is required");
+        if (userRepo.findByUsername(username).isPresent())
+            return Map.of("status", "error", "message", "Username already exists");
+        AppUser user = new AppUser();
+        user.setUsername(username);
+        user.setDisplayName(body.getOrDefault("displayName", username));
+        user.setLocation(body.get("location"));
+        user.setIsAdmin(Boolean.parseBoolean(body.getOrDefault("isAdmin", "false")));
+        userRepo.save(user);
+        return Map.of("status", "success", "userId", user.getId());
     }
 
     @PostMapping("/update-scores/{matchId}")
@@ -124,19 +118,4 @@ public class AdminController {
         return matchRepo.findAll(org.springframework.data.domain.Sort.by("matchTime"));
     }
 
-    @PostMapping("/users")
-    public Map<String, Object> createUser(@RequestBody Map<String, String> body) {
-        String username = body.get("username");
-        if (username == null || username.isBlank())
-            return Map.of("status", "error", "message", "Username is required");
-        if (userRepo.findByUsername(username).isPresent())
-            return Map.of("status", "error", "message", "Username already exists");
-        AppUser user = new AppUser();
-        user.setUsername(username);
-        user.setDisplayName(body.getOrDefault("displayName", username));
-        user.setLocation(body.get("location"));
-        user.setIsAdmin(Boolean.parseBoolean(body.getOrDefault("isAdmin", "false")));
-        userRepo.save(user);
-        return Map.of("status", "success", "userId", user.getId());
-    }
 }
