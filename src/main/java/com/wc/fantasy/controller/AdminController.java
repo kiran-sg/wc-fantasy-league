@@ -28,6 +28,35 @@ public class AdminController {
     private final FifaScraperService fifaScraperService;
     private final com.wc.fantasy.repository.UserRepository userRepo;
 
+    // ── User management ──────────────────────────────────────────────────────
+
+    public record UserRequest(String username, String displayName, String location, Boolean isAdmin) {}
+
+    @GetMapping("/users")
+    public List<com.wc.fantasy.model.AppUser> listUsers() {
+        return userRepo.findAll();
+    }
+
+    @PostMapping("/users")
+    public Map<String, Object> addUsers(@RequestBody List<UserRequest> requests) {
+        List<String> created = new ArrayList<>();
+        List<String> existing = new ArrayList<>();
+        for (UserRequest req : requests) {
+            if (userRepo.findByUsername(req.username()).isPresent()) {
+                existing.add(req.username());
+            } else {
+                com.wc.fantasy.model.AppUser u = new com.wc.fantasy.model.AppUser();
+                u.setUsername(req.username());
+                u.setDisplayName(req.displayName() != null ? req.displayName() : req.username());
+                u.setLocation(req.location());
+                u.setIsAdmin(Boolean.TRUE.equals(req.isAdmin()));
+                userRepo.save(u);
+                created.add(req.username());
+            }
+        }
+        return Map.of("created", created, "alreadyExisted", existing);
+    }
+
     @PostMapping("/update-scores/{matchId}")
     public Map<String, Object> updateScores(@PathVariable Long matchId) {
         Match match = matchRepo.findById(matchId)
