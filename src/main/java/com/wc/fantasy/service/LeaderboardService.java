@@ -19,12 +19,13 @@ public class LeaderboardService {
     private final UserSquadRepository squadRepo;
 
     public List<AppUser> getOverallLeaderboard() {
-        return userRepo.findAll(Sort.by(Sort.Direction.DESC, "totalPoints"));
+        return userRepo.findByIsAdminFalseOrIsAdminIsNullOrderByTotalPointsDesc();
     }
 
     public List<Map<String, Object>> getRoundLeaderboard(Long matchId) {
         List<UserSquad> squads = squadRepo.findByMatchId(matchId);
         return squads.stream()
+                .filter(s -> s.getUser() != null && (s.getUser().getIsAdmin() == null || !s.getUser().getIsAdmin()))
                 .sorted(Comparator.comparingInt(
                         (UserSquad s) -> s.getPointsEarned() != null ? s.getPointsEarned() : 0)
                         .reversed())
