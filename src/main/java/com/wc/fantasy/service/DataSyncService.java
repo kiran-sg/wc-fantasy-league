@@ -52,7 +52,28 @@ public class DataSyncService {
         Map.entry("61","2026-06-26T19:00"), Map.entry("62","2026-06-26T19:00"), Map.entry("63","2026-06-27T00:00"),
         Map.entry("64","2026-06-27T00:00"), Map.entry("65","2026-06-27T03:00"), Map.entry("66","2026-06-27T03:00"),
         Map.entry("67","2026-06-27T21:00"), Map.entry("68","2026-06-27T21:00"), Map.entry("69","2026-06-27T23:30"),
-        Map.entry("70","2026-06-27T23:30"), Map.entry("71","2026-06-28T02:00"), Map.entry("72","2026-06-28T02:00")
+        Map.entry("70","2026-06-27T23:30"), Map.entry("71","2026-06-28T02:00"), Map.entry("72","2026-06-28T02:00"),
+        // R32 (IDs 73-88)
+        Map.entry("73","2026-06-28T16:00"), Map.entry("74","2026-06-29T20:30"),
+        Map.entry("75","2026-06-29T23:00"), Map.entry("76","2026-06-29T16:00"),
+        Map.entry("77","2026-06-30T21:00"), Map.entry("78","2026-06-30T16:00"),
+        Map.entry("79","2026-06-30T23:00"), Map.entry("80","2026-07-01T16:00"),
+        Map.entry("81","2026-07-01T21:00"), Map.entry("82","2026-07-01T17:00"),
+        Map.entry("83","2026-07-02T23:00"), Map.entry("84","2026-07-02T16:00"),
+        Map.entry("85","2026-07-03T00:00"), Map.entry("86","2026-07-03T22:00"),
+        Map.entry("87","2026-07-04T00:30"), Map.entry("88","2026-07-03T17:00"),
+        // R16 (IDs 89-96)
+        Map.entry("89","2026-07-05T20:00"), Map.entry("90","2026-07-06T00:00"),
+        Map.entry("91","2026-07-06T20:00"), Map.entry("92","2026-07-07T00:00"),
+        Map.entry("93","2026-07-07T20:00"), Map.entry("94","2026-07-08T00:00"),
+        Map.entry("95","2026-07-08T20:00"), Map.entry("96","2026-07-09T00:00"),
+        // QF (IDs 97-100)
+        Map.entry("97","2026-07-11T20:00"), Map.entry("98","2026-07-12T00:00"),
+        Map.entry("99","2026-07-12T20:00"), Map.entry("100","2026-07-13T00:00"),
+        // SF (IDs 101-102)
+        Map.entry("101","2026-07-15T00:00"), Map.entry("102","2026-07-16T00:00"),
+        // 3rd place + Final (IDs 103-104)
+        Map.entry("103","2026-07-18T20:00"), Map.entry("104","2026-07-19T20:00")
     );
 
     private static final Map<String, String> GROUP_MAP = Map.ofEntries(
@@ -147,36 +168,99 @@ public class DataSyncService {
         Map<String, Team> codeToTeam = new HashMap<>();
         teamRepo.findAll().forEach(t -> { if (t.getCode() != null) codeToTeam.put(t.getCode(), t); });
 
-        if (matchRepo.count() > 0) {
-            matchRepo.deleteAll();
-        }
+        // Upsert keyed by match ID stored in venue "[#<id>]", with fallback by teamA+teamB+time
+        // for existing matches saved before this fix was applied.
+        Map<String, Match> existingById = new HashMap<>();
+        Map<String, Match> existingByTeamTime = new HashMap<>();
+        matchRepo.findAll().forEach(ex -> {
+            if (ex.getVenue() != null) {
+                java.util.regex.Matcher vm = java.util.regex.Pattern.compile("\\[#(\\d+)\\]").matcher(ex.getVenue());
+                if (vm.find()) existingById.put(vm.group(1), ex);
+            }
+            if (ex.getTeamA() != null && ex.getTeamB() != null && ex.getMatchTime() != null) {
+                String k = ex.getTeamA().getId() + "_" + ex.getTeamB().getId() + "_" + ex.getMatchTime();
+                existingByTeamTime.put(k, ex);
+            }
+        });
 
         int count = 0;
+        int updated = 0;
         for (Map<String, Object> m : matches) {
-            String matchId = String.valueOf(m.get("id"));
-            String homeCode = teamIdToCode.get(String.valueOf(m.get("home_team_id")));
-            String awayCode = teamIdToCode.get(String.valueOf(m.get("away_team_id")));
+            String matchId   = String.valueOf(m.get("id"));
+            String homeIdStr = String.valueOf(m.get("home_team_id"));
+            String awayIdStr = String.valueOf(m.get("away_team_id"));
+            String homeCode  = teamIdToCode.get(homeIdStr);
+            String awayCode  = teamIdToCode.get(awayIdStr);
             Team teamA = codeToTeam.get(homeCode);
             Team teamB = codeToTeam.get(awayCode);
-            if (teamA == null || teamB == null) continue;
+
+            // For knockout matches teams are TBD (home_team_id=0) — still insert the slot
+            boolean teamsKnown = teamA != null && teamB != null;
 
             String utcStr = OFFICIAL_UTC.get(matchId);
-            LocalDateTime matchTime = utcStr != null
-                    ? LocalDateTime.parse(utcStr, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
-                    : LocalDateTime.now().plusDays(1);
+            LocalDateTime matchTime = null;
+            if (utcStr != null) {
+                matchTime = LocalDateTime.parse(utcStr, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"));
+            } else {
+                // Fallback: parse local_date from source JSON ("MM/dd/yyyy HH:mm")
+                String localDate = (String) m.get("local_date");
+                if (localDate != null && !localDate.isBlank()) {
+                    try {
+                        matchTime = LocalDateTime.parse(localDate.trim(),
+                                DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm"));
+                    } catch (Exception ignored) {}
+                }
+            }
+            if (matchTime == null) continue; // skip only if truly no time available
 
-            Match match = new Match();
-            match.setTeamA(teamA);
-            match.setTeamB(teamB);
-            match.setMatchTime(matchTime);
-            match.setVenue(stadiumMap.getOrDefault(String.valueOf(m.get("stadium_id")), "TBD"));
-            match.setStage("GROUP");
-            match.setStatus("UPCOMING");
-            matchRepo.save(match);
-            count++;
+            String stage = resolveStage(m, matchId);
+            String venue = stadiumMap.getOrDefault(String.valueOf(m.get("stadium_id")), "TBD")
+                           + " [#" + matchId + "]";
+
+            // Find existing — prefer [#id] key, fall back to team+time for pre-fix rows
+            String teamTimeKey = teamsKnown && matchTime != null
+                    ? teamA.getId() + "_" + teamB.getId() + "_" + matchTime
+                    : null;
+            Match existing = existingById.get(matchId);
+            if (existing == null && teamTimeKey != null) existing = existingByTeamTime.get(teamTimeKey);
+
+            if (existing != null) {
+                boolean changed = false;
+                // Correct stage if it was previously hardcoded as GROUP
+                if (!stage.equals(existing.getStage())) { existing.setStage(stage); changed = true; }
+                // Fill in teams if they've now been determined
+                if (teamsKnown && existing.getTeamA() == null) { existing.setTeamA(teamA); changed = true; }
+                if (teamsKnown && existing.getTeamB() == null) { existing.setTeamB(teamB); changed = true; }
+                // Update TBD labels
+                String newLabelA = (String) m.get("home_team_label");
+                String newLabelB = (String) m.get("away_team_label");
+                if (newLabelA != null && !newLabelA.equals(existing.getTeamALabel())) { existing.setTeamALabel(newLabelA); changed = true; }
+                if (newLabelB != null && !newLabelB.equals(existing.getTeamBLabel())) { existing.setTeamBLabel(newLabelB); changed = true; }
+                // Stamp [#matchId] on venue if it's missing (backfills pre-fix rows)
+                if (existing.getVenue() == null || !existing.getVenue().contains("[#" + matchId + "]")) {
+                    String baseVenue = existing.getVenue() != null
+                            ? existing.getVenue().replaceAll("\\s*\\[#\\d+\\]", "").trim()
+                            : venue.replaceAll("\\s*\\[#\\d+\\]", "").trim();
+                    existing.setVenue(baseVenue + " [#" + matchId + "]");
+                    changed = true;
+                }
+                if (changed) { matchRepo.save(existing); updated++; }
+            } else {
+                Match match = new Match();
+                match.setTeamA(teamA);  // null for TBD — filled when teams qualify
+                match.setTeamB(teamB);
+                match.setMatchTime(matchTime);
+                match.setVenue(venue);
+                match.setStage(stage);
+                match.setStatus("UPCOMING");
+                match.setTeamALabel((String) m.get("home_team_label"));
+                match.setTeamBLabel((String) m.get("away_team_label"));
+                matchRepo.save(match);
+                count++;
+            }
         }
-        log.info("Synced {} matches", count);
-        return count;
+        log.info("Synced {} new matches, {} corrections", count, updated);
+        return (int) matchRepo.count();
     }
 
     public int syncPlayers() {
@@ -302,6 +386,35 @@ public class DataSyncService {
         } catch (Exception e) {
             log.warn("Failed to fetch squad for ESPN team {}: {}", espnTeamId, e.getMessage());
             return List.of();
+        }
+    }
+
+    // Prefer the "type" field from the source JSON; fall back to match-ID range if absent.
+    // Source types: "group", "r32", "r16", "qf", "sf", "third", "final"
+    private String resolveStage(Map<String, Object> m, String matchId) {
+        Object typeObj = m.get("type");
+        if (typeObj instanceof String type && !type.isBlank()) {
+            switch (type.toLowerCase()) {
+                case "group":  return "GROUP";
+                case "r32":    return "R32";
+                case "r16":    return "R16";
+                case "qf":     return "QF";
+                case "sf":     return "SF";
+                case "third":  return "SF";   // 3rd-place play-off treated as SF tier
+                case "final":  return "FINAL";
+            }
+        }
+        // Fallback: source JSON has 72 group matches (IDs 1-72) then knockout
+        try {
+            int id = Integer.parseInt(matchId);
+            if (id <= 72) return "GROUP";
+            if (id <= 88) return "R32";
+            if (id <= 96) return "R16";
+            if (id <= 100) return "QF";
+            if (id <= 102) return "SF";
+            return "FINAL";
+        } catch (NumberFormatException e) {
+            return "GROUP";
         }
     }
 

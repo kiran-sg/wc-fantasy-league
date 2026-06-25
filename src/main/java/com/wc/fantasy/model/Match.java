@@ -23,4 +23,6 @@ public class Match {
     private String status; // UPCOMING, LIVE, COMPLETED
     private Integer scoreA;
     private Integer scoreB;
+    private String teamALabel; // TBD placeholder e.g. "Winner Group A"
+    private String teamBLabel;
 }

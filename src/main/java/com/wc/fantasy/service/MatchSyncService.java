@@ -61,7 +61,7 @@ public class MatchSyncService {
                 match.setTeamB(teamB);
                 match.setMatchTime(parseDateTime((String) m.get("dateTime")));
                 match.setVenue(m.get("venue") + " [#" + matchNo + "]");
-                match.setStage("GROUP");
+                match.setStage(resolveStageFromPayload(m, matchNo));
                 match.setStatus("UPCOMING");
                 matchRepo.save(match);
                 synced++;
@@ -106,6 +106,38 @@ public class MatchSyncService {
                     t.setFlagUrl(logoUrl);
                     return teamRepo.save(t);
                 });
+    }
+
+    // Try to read stage/type from prediction API payload, fall back to match-number range.
+    private String resolveStageFromPayload(Map<String, Object> m, String matchNo) {
+        for (String key : List.of("stage", "type", "round")) {
+            Object val = m.get(key);
+            if (val instanceof String s && !s.isBlank()) {
+                switch (s.toLowerCase().trim()) {
+                    case "group":  return "GROUP";
+                    case "r32":    return "R32";
+                    case "r16":    return "R16";
+                    case "qf": case "quarterfinal": case "quarter-final": return "QF";
+                    case "sf": case "semifinal":    case "semi-final":    return "SF";
+                    case "third":  return "SF";
+                    case "final":  return "FINAL";
+                }
+                String u = s.toUpperCase().trim();
+                if (u.equals("GROUP") || u.equals("R32") || u.equals("R16") || u.equals("QF") || u.equals("SF") || u.equals("FINAL")) return u;
+            }
+        }
+        // Fall back to match-number range (72 group + 16 r32 + 8 r16 + 4 qf + 2 sf + 1 final)
+        try {
+            int id = Integer.parseInt(matchNo);
+            if (id <= 72) return "GROUP";
+            if (id <= 88) return "R32";
+            if (id <= 96) return "R16";
+            if (id <= 100) return "QF";
+            if (id <= 102) return "SF";
+            return "FINAL";
+        } catch (NumberFormatException e) {
+            return "GROUP";
+        }
     }
 
     private LocalDateTime parseDateTime(String dt) {
