@@ -25,14 +25,18 @@ public class SecurityConfig {
         return http
                 .cors(cors -> cors.configurationSource(r -> {
                     var c = new CorsConfiguration();
-                    c.setAllowedOrigins(List.of("*"));
-                    c.setAllowedMethods(List.of("*"));
+                    c.setAllowedOriginPatterns(List.of("*"));
+                    c.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
                     c.setAllowedHeaders(List.of("*"));
+                    c.setExposedHeaders(List.of("Authorization"));
+                    c.setAllowCredentials(false);
+                    c.setMaxAge(3600L);
                     return c;
                 }))
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**", "/h2-console/**", "/api/admin/**", "/api/sync/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/matches/**", "/api/teams/**", "/api/players/**", "/api/leaderboard/**").permitAll()
                         .requestMatchers("/api/team/**").authenticated()
