@@ -82,14 +82,25 @@ public class DataSeeder implements CommandLineRunner {
 
     private void seedPlayers(Team team, List<String> names) {
         String[] positions = {"GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "FWD", "FWD", "FWD", "MID", "DEF"};
+        // Prices in millions: GK=5.5, DEF=6, MID=8, FWD=9.5 — star players (index 8-10) get premium
+        java.math.BigDecimal[] basePrices = {
+            bd(5_500_000), bd(6_000_000), bd(6_000_000), bd(6_000_000), bd(6_500_000),
+            bd(8_000_000), bd(8_000_000), bd(8_500_000), bd(9_500_000), bd(9_000_000),
+            bd(8_500_000), bd(7_500_000), bd(6_000_000)
+        };
         for (int i = 0; i < names.size(); i++) {
             Player p = new Player();
             p.setName(names.get(i));
             p.setPosition(positions[i % positions.length]);
             p.setTeam(team);
             p.setJerseyNumber(i + 1);
+            p.setPrice(basePrices[i % basePrices.length]);
             playerRepo.save(p);
         }
+    }
+
+    private java.math.BigDecimal bd(long val) {
+        return java.math.BigDecimal.valueOf(val);
     }
 
     private void createMatch(Team teamA, Team teamB, LocalDateTime time, String venue, String stage) {

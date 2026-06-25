@@ -27,6 +27,11 @@ public class AuthController {
             return userRepo.save(u);
         });
         String token = jwtService.generateToken(username);
-        return ResponseEntity.ok(Map.of("token", token, "userId", user.getId(), "username", user.getUsername()));
+        return ResponseEntity.ok(Map.of(
+                "token", token,
+                "userId", user.getId(),
+                "username", user.getUsername(),
+                "isAdmin", Boolean.TRUE.equals(user.getIsAdmin())
+        ));
     }
 }

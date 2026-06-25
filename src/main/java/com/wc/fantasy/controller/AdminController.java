@@ -3,7 +3,9 @@ package com.wc.fantasy.controller;
 import com.wc.fantasy.model.*;
 import com.wc.fantasy.repository.*;
 import com.wc.fantasy.service.EspnScraperService;
+import com.wc.fantasy.service.FifaScraperService;
 import com.wc.fantasy.service.SquadService;
+import com.wc.fantasy.service.UserTeamService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -18,46 +20,64 @@ import java.util.*;
 public class AdminController {
 
     private final MatchRepository matchRepo;
-    private final PlayerRepository playerRepo;
     private final MatchPlayerStatsRepository statsRepo;
     private final UserSquadRepository squadRepo;
     private final SquadService squadService;
     private final EspnScraperService scraperService;
+    private final UserTeamService userTeamService;
+    private final FifaScraperService fifaScraperService;
+    private final com.wc.fantasy.repository.UserRepository userRepo;
 
     @PostMapping("/update-scores/{matchId}")
     public Map<String, Object> updateScores(@PathVariable Long matchId) {
-        Match match = matchRepo.findById(matchId).orElseThrow(() -> new IllegalArgumentException("Match not found"));
+        Match match = matchRepo.findById(matchId)
+                .orElseThrow(() -> new IllegalArgumentException("Match not found"));
 
-        EspnScraperService.ScrapedMatchResult result = scraperService.scrapeMatch(match);
-        if (result == null) {
-            return Map.of("status", "error", "message", "Could not scrape match data from ESPN. Match may not be finished yet.");
+        List<MatchPlayerStats> stats = scraperService.fetchAndBuildStats(match);
+        if (stats.isEmpty()) {
+            return Map.of("status", "error", "message", "Could not fetch match data from ESPN. Match may not be finished yet.");
         }
 
-        List<MatchPlayerStats> allStats = scraperService.buildStats(match, result);
-        if (allStats.isEmpty()) {
-            return Map.of("status", "error", "message", "No player stats could be built from scraped data.");
+        // Update match score from ESPN
+        EspnScraperService.ScoreResult score = scraperService.fetchScore(match);
+        if (score != null) {
+            match.setScoreA(score.homeScore());
+            match.setScoreB(score.awayScore());
         }
-
-        // Save all stats
-        statsRepo.deleteAll(statsRepo.findByMatchId(matchId));
-        statsRepo.saveAll(allStats);
-
-        // Mark match as completed
         match.setStatus("COMPLETED");
-        match.setScoreA(result.homeScore());
-        match.setScoreB(result.awayScore());
         matchRepo.save(match);
 
-        // Calculate fantasy points for all user squads
+        statsRepo.deleteAll(statsRepo.findByMatchId(matchId));
+        statsRepo.saveAll(stats);
+
+        // Calculate points for old per-match squads (UserSquad model, kept for backwards compat)
         squadService.calculatePoints(matchId);
+
+        // Calculate points for persistent user teams (new model)
+        userTeamService.calculatePointsForMatch(matchId, match);
 
         return Map.of(
                 "status", "success",
                 "matchId", matchId,
-                "scoreA", match.getScoreA(),
-                "scoreB", match.getScoreB(),
-                "statsCount", allStats.size()
+                "scoreA", match.getScoreA() != null ? match.getScoreA() : 0,
+                "scoreB", match.getScoreB() != null ? match.getScoreB() : 0,
+                "statsCount", stats.size()
         );
+    }
+
+    @PostMapping("/sync-fifa-prices")
+    public Map<String, Object> syncFifaPrices() {
+        try {
+            FifaScraperService.SyncResult result = fifaScraperService.syncPrices();
+            return Map.of(
+                    "status", "success",
+                    "matched", result.matched(),
+                    "unmatched", result.unmatched(),
+                    "unmatchedNames", result.unmatchedNames()
+            );
+        } catch (Exception e) {
+            return Map.of("status", "error", "message", e.getMessage());
+        }
     }
 
     @GetMapping("/match-stats/{matchId}")
@@ -73,5 +93,21 @@ public class AdminController {
     @GetMapping("/matches")
     public List<Match> getAllMatches() {
         return matchRepo.findAll(org.springframework.data.domain.Sort.by("matchTime"));
+    }
+
+    @PostMapping("/users")
+    public Map<String, Object> createUser(@RequestBody Map<String, String> body) {
+        String username = body.get("username");
+        if (username == null || username.isBlank())
+            return Map.of("status", "error", "message", "Username is required");
+        if (userRepo.findByUsername(username).isPresent())
+            return Map.of("status", "error", "message", "Username already exists");
+        AppUser user = new AppUser();
+        user.setUsername(username);
+        user.setDisplayName(body.getOrDefault("displayName", username));
+        user.setLocation(body.get("location"));
+        user.setIsAdmin(Boolean.parseBoolean(body.getOrDefault("isAdmin", "false")));
+        userRepo.save(user);
+        return Map.of("status", "success", "userId", user.getId());
     }
 }

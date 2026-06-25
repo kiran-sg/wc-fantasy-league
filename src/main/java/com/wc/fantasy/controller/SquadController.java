@@ -18,12 +18,32 @@ public class SquadController {
 
     @PostMapping
     public UserSquad saveSquad(@RequestBody Map<String, Object> body) {
-        Long userId = ((Number) body.get("userId")).longValue();
-        Long matchId = ((Number) body.get("matchId")).longValue();
-        List<Long> playerIds = ((List<Number>) body.get("playerIds")).stream()
-                .map(Number::longValue).toList();
-        Long captainId = ((Number) body.get("captainId")).longValue();
-        return squadService.saveSquad(userId, matchId, playerIds, captainId);
+        Long userId      = ((Number) body.get("userId")).longValue();
+        Long matchId     = ((Number) body.get("matchId")).longValue();
+        Long captainId   = ((Number) body.get("captainId")).longValue();
+        Long vcId        = ((Number) body.get("viceCaptainId")).longValue();
+
+        List<Long> startingIds = ((List<Number>) body.get("playerIds"))
+                .stream().map(Number::longValue).toList();
+
+        List<Long> benchIds = body.containsKey("benchIds")
+                ? ((List<Number>) body.get("benchIds")).stream().map(Number::longValue).toList()
+                : List.of();
+
+        return squadService.saveSquad(userId, matchId, startingIds, captainId, vcId, benchIds);
+    }
+
+    @PostMapping("/{squadId}/captain")
+    public UserSquad changeCaptain(@PathVariable Long squadId, @RequestBody Map<String, Object> body) {
+        Long newCaptainId = ((Number) body.get("captainId")).longValue();
+        return squadService.changeCaptain(squadId, newCaptainId);
+    }
+
+    @PostMapping("/{squadId}/sub")
+    public UserSquad manualSub(@PathVariable Long squadId, @RequestBody Map<String, Object> body) {
+        Long outPlayerId = ((Number) body.get("outPlayerId")).longValue();
+        Long inPlayerId  = ((Number) body.get("inPlayerId")).longValue();
+        return squadService.manualSub(squadId, outPlayerId, inPlayerId);
     }
 
     @GetMapping("/{userId}/{matchId}")

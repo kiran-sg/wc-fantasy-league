@@ -20,6 +20,7 @@ public class DataSyncService {
     private final TeamRepository teamRepo;
     private final MatchRepository matchRepo;
     private final PlayerRepository playerRepo;
+    private final FifaScraperService fifaScraperService;
 
     private static final String TEAMS_URL = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/football.teams.json";
     private static final String STADIUMS_URL = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/football.stadiums.json";
@@ -202,16 +203,59 @@ public class DataSyncService {
 
             List<String[]> players = fetchSquad(espnId);
             for (String[] p : players) {
+                String name = p[0];
+                String pos  = p[1];
+                String jerseyStr = p.length > 2 ? p[2] : null;
+
+                // Skip duplicate name+team combos
+                boolean exists = playerRepo.findByTeamId(team.getId()).stream()
+                        .anyMatch(ex -> ex.getName().equalsIgnoreCase(name));
+                if (exists) continue;
+
                 Player player = new Player();
-                player.setName(p[0]);
-                player.setPosition(p[1]);
+                player.setName(name);
+                player.setPosition(pos);
                 player.setTeam(team);
+                player.setPrice(calcPrice(name, pos));
+                if (jerseyStr != null) {
+                    try { player.setJerseyNumber(Integer.parseInt(jerseyStr)); } catch (NumberFormatException ignored) {}
+                }
                 playerRepo.save(player);
                 total++;
             }
         }
         log.info("Synced {} players from ESPN", total);
+
+        // Apply FIFA prices on top of the freshly synced players
+        try {
+            FifaScraperService.SyncResult priceResult = fifaScraperService.syncPrices();
+            log.info("FIFA price sync after player sync: {} matched, {} unmatched", priceResult.matched(), priceResult.unmatched());
+        } catch (Exception e) {
+            log.warn("FIFA price sync failed (non-fatal): {}", e.getMessage());
+        }
+
         return total;
+    }
+
+    // Price tiers: [minM, maxM] in millions for each position
+    private static final Map<String, long[]> PRICE_TIERS = Map.of(
+        "GK",  new long[]{5_500_000L, 7_000_000L},
+        "DEF", new long[]{5_500_000L, 8_000_000L},
+        "MID", new long[]{6_000_000L, 9_500_000L},
+        "FWD", new long[]{6_500_000L, 10_500_000L}
+    );
+
+    // Deterministic price from player name hash — same name always gets same price,
+    // rounded to nearest 0.5M step so it looks like real fantasy pricing.
+    private java.math.BigDecimal calcPrice(String name, String position) {
+        long[] tier = PRICE_TIERS.getOrDefault(position, new long[]{6_000_000L, 8_000_000L});
+        long range  = tier[1] - tier[0];
+        // Use abs(hashCode) mod range, then round to nearest 500_000
+        long raw    = tier[0] + (Math.abs((long) name.hashCode()) % (range + 1));
+        long step   = 500_000L;
+        long rounded = Math.round((double) raw / step) * step;
+        rounded = Math.max(tier[0], Math.min(tier[1], rounded));
+        return java.math.BigDecimal.valueOf(rounded);
     }
 
     private List<String[]> fetchSquad(String espnTeamId) {
@@ -225,14 +269,32 @@ public class DataSyncService {
 
             List<String[]> players = new ArrayList<>();
             Set<String> seen = new HashSet<>();
-            // Match JSON embedded player data
-            Matcher m = Pattern.compile("\"name\":\"([^\"]+)\",\"href\":\"[^\"]*soccer/player/_/id/(\\d+)/[^\"]*\"[^}]{0,500}\"position\":\"([GDMF])\"").matcher(html);
+
+            // Primary: match jersey number, name, espn id, position from embedded JSON
+            Matcher m = Pattern.compile(
+                "\"jersey\":\"(\\d+)\"[^}]{0,200}\"name\":\"([^\"]+)\",\"href\":\"[^\"]*soccer/player/_/id/(\\d+)/[^\"]*\"[^}]{0,500}\"position\":\"([GDMF])\""
+            ).matcher(html);
             while (m.find()) {
-                String name = m.group(1);
-                String pid = m.group(2);
-                String pos = POS_MAP.getOrDefault(m.group(3), "MID");
-                if (seen.add(pid)) players.add(new String[]{name, pos});
+                String jersey = m.group(1);
+                String name   = m.group(2);
+                String pid    = m.group(3);
+                String pos    = POS_MAP.getOrDefault(m.group(4), "MID");
+                if (seen.add(pid)) players.add(new String[]{name, pos, jersey});
             }
+
+            // Fallback: no jersey captured
+            if (players.isEmpty()) {
+                Matcher m2 = Pattern.compile(
+                    "\"name\":\"([^\"]+)\",\"href\":\"[^\"]*soccer/player/_/id/(\\d+)/[^\"]*\"[^}]{0,500}\"position\":\"([GDMF])\""
+                ).matcher(html);
+                while (m2.find()) {
+                    String name = m2.group(1);
+                    String pid  = m2.group(2);
+                    String pos  = POS_MAP.getOrDefault(m2.group(3), "MID");
+                    if (seen.add(pid)) players.add(new String[]{name, pos, null});
+                }
+            }
+
             if (players.isEmpty()) {
                 log.warn("No players matched for team {} (html length: {})", espnTeamId, html.length());
             }

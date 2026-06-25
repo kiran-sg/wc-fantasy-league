@@ -25,6 +25,16 @@ public class UserSquad {
     @ManyToOne
     @JoinColumn(name = "captain_id")
     private Player captain;
+    @ManyToOne
+    @JoinColumn(name = "vice_captain_id")
+    private Player viceCaptain;
+    @ManyToMany
+    @JoinTable(name = "squad_bench",
+            joinColumns = @JoinColumn(name = "squad_id"),
+            inverseJoinColumns = @JoinColumn(name = "player_id"))
+    @OrderColumn(name = "bench_order")
+    private List<Player> bench = new java.util.ArrayList<>();
+    private Boolean manualChangesMade = false;
     private Integer pointsEarned = 0;
     private Boolean locked = false;
 }

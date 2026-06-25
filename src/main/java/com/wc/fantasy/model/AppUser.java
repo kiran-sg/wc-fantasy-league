@@ -14,4 +14,10 @@ public class AppUser {
     private String username;
     private String displayName;
     private Integer totalPoints = 0;
+
+    @Column(name = "is_admin", nullable = false, columnDefinition = "boolean default false")
+    private Boolean isAdmin = false;
+
+    @Column(name = "location")
+    private String location;
 }

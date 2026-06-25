@@ -2,6 +2,7 @@ package com.wc.fantasy.controller;
 
 import com.wc.fantasy.model.AppUser;
 import com.wc.fantasy.repository.*;
+import com.wc.fantasy.repository.UserTransferRecordRepository;
 import com.wc.fantasy.service.DataSyncService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +23,9 @@ public class SyncController {
     private final MatchRepository matchRepo;
     private final TeamRepository teamRepo;
     private final UserRepository userRepo;
+    private final UserTeamMatchPointsRepository userTeamMatchPointsRepo;
+    private final UserTeamRepository userTeamRepo;
+    private final UserTransferRecordRepository transferRecordRepo;
 
     @PostMapping("/users")
     public Map<String, Object> addUsers(@RequestBody List<Map<String, String>> users) {
@@ -42,10 +46,14 @@ public class SyncController {
     @GetMapping("/reset")
     public Map<String, Object> reset() {
         statsRepo.deleteAll();
+        userTeamMatchPointsRepo.deleteAll();
+        transferRecordRepo.deleteAll();
         squadRepo.deleteAll();
+        userTeamRepo.deleteAll();
         playerRepo.deleteAll();
         matchRepo.deleteAll();
         teamRepo.deleteAll();
+        userRepo.findAll().forEach(u -> { u.setTotalPoints(0); userRepo.save(u); });
         return Map.of("status", "reset complete");
     }
 

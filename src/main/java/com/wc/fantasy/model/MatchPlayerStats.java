@@ -20,8 +20,11 @@ public class MatchPlayerStats {
     private Integer assists = 0;
     private Integer yellowCards = 0;
     private Integer redCards = 0;
+    private Integer ownGoals = 0;
     private Boolean cleanSheet = false;
+    private Integer goalsConceded = 0;
     private Integer minutesPlayed = 0;
-    private Boolean manOfMatch = false;
+    private Integer saves = 0;
+    private Integer shotsOnTarget = 0;
     private Integer totalPoints = 0;
 }
