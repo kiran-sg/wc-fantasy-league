@@ -63,6 +63,7 @@ public class AdminController {
     private static final Map<String, String> LOCATION_MAP = Map.of(
             "trivandrum", "TVM",
             "tvm",        "TVM",
+            "pune",       "Pune",
             "bangalore",  "BLR",
             "blr",        "BLR",
             "dubai",      "DXB",
