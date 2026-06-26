@@ -97,6 +97,17 @@ public class AdminController {
         }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
     }
 
+    @PatchMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> updateUser(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        com.wc.fantasy.model.AppUser user = userRepo.findById(id).orElse(null);
+        if (user == null) return ResponseEntity.notFound().build();
+        if (body.containsKey("location")) {
+            user.setLocation(normalizeLocation(body.get("location")));
+        }
+        userRepo.save(user);
+        return ResponseEntity.ok(Map.<String, Object>of("id", user.getId(), "location", user.getLocation() != null ? user.getLocation() : ""));
+    }
+
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(@PathVariable Long id) {
         com.wc.fantasy.model.AppUser user = userRepo.findById(id).orElse(null);
