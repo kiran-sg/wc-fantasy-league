@@ -31,6 +31,7 @@ public class AdminController {
     private final UserTeamService userTeamService;
     private final FifaScraperService fifaScraperService;
     private final com.wc.fantasy.repository.UserRepository userRepo;
+    private final com.wc.fantasy.repository.PlayerRepository playerRepo;
 
     // ── User management ──────────────────────────────────────────────────────
 
@@ -78,6 +79,19 @@ public class AdminController {
             case NUMERIC -> String.valueOf((long) cell.getNumericCellValue());
             default      -> null;
         };
+    }
+
+    @PatchMapping("/players/{id}/price")
+    public ResponseEntity<Map<String, Object>> updatePlayerPrice(
+            @PathVariable Long id,
+            @RequestParam("value") long priceInUnits) {
+        return playerRepo.findById(id).map(p -> {
+            p.setPrice(java.math.BigDecimal.valueOf(priceInUnits));
+            playerRepo.save(p);
+            return ResponseEntity.ok(Map.<String, Object>of(
+                    "id", p.getId(), "name", p.getName(),
+                    "price", p.getPrice().longValue()));
+        }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
     }
 
     @DeleteMapping("/users")
