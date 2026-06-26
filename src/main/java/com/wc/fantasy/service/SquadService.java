@@ -25,7 +25,7 @@ public class SquadService {
     private static final BigDecimal BUDGET = BigDecimal.valueOf(105_000_000);
 
     private static final Map<String, Integer> FREE_TRANSFERS = Map.of(
-            "R32",   99, // unlimited
+            "R32",   4,
             "R16",   4,
             "QF",    4,
             "SF",    5,
@@ -75,9 +75,17 @@ public class SquadService {
         validatePositions(starters);
         validateBudget(allPlayers);
 
-        // Auto-assign captain = most expensive, VC = second most expensive if not supplied
-        Player captain = playerRepo.findById(captainId).orElseThrow();
-        Player viceCaptain = playerRepo.findById(viceCaptainId).orElseThrow();
+        // Auto-assign captain = most expensive starter, VC = second most expensive, if not supplied
+        List<Player> sortedByPrice = starters.stream()
+                .filter(p -> p.getPrice() != null)
+                .sorted((a, b) -> b.getPrice().compareTo(a.getPrice()))
+                .toList();
+        Player captain = (captainId != null)
+                ? playerRepo.findById(captainId).orElse(sortedByPrice.isEmpty() ? starters.get(0) : sortedByPrice.get(0))
+                : (sortedByPrice.isEmpty() ? starters.get(0) : sortedByPrice.get(0));
+        Player viceCaptain = (viceCaptainId != null)
+                ? playerRepo.findById(viceCaptainId).orElse(sortedByPrice.size() > 1 ? sortedByPrice.get(1) : captain)
+                : (sortedByPrice.size() > 1 ? sortedByPrice.get(1) : captain);
 
         // Transfer penalty: count previous squads for this user in this stage and deduct points
         AppUser user = userRepo.findById(userId).orElseThrow();
@@ -233,8 +241,8 @@ public class SquadService {
         // Assists
         pts += (s.getAssists() != null ? s.getAssists() : 0) * 3;
 
-        // Clean sheet
-        if (Boolean.TRUE.equals(s.getCleanSheet())) {
+        // Clean sheet — requires 60+ minutes played
+        if (Boolean.TRUE.equals(s.getCleanSheet()) && s.getMinutesPlayed() >= 60) {
             if ("GK".equals(pos) || "DEF".equals(pos)) pts += 5;
             else if ("MID".equals(pos)) pts += 1;
         }
@@ -323,18 +331,13 @@ public class SquadService {
     }
 
     private void validateCountryLimit(List<Player> starters, String stage) {
-        int stageLimit = COUNTRY_LIMIT.getOrDefault(stage, 3);
-        // When a match only has 2 teams, the stage limit is too restrictive —
-        // use the larger of stageLimit or ceil(15 / uniqueTeamCount).
-        long uniqueTeams = starters.stream().map(p -> p.getTeam().getId()).distinct().count();
-        if (uniqueTeams == 0) return;
-        int effectiveLimit = (int) Math.max(stageLimit, Math.ceil(15.0 / uniqueTeams));
+        int limit = COUNTRY_LIMIT.getOrDefault(stage, 3);
         Map<Long, Long> countPerTeam = starters.stream()
                 .collect(Collectors.groupingBy(p -> p.getTeam().getId(), Collectors.counting()));
         countPerTeam.forEach((teamId, count) -> {
-            if (count > effectiveLimit) {
+            if (count > limit) {
                 throw new IllegalArgumentException(
-                        "Too many players from the same country for stage " + stage + " (max " + effectiveLimit + ")");
+                        "Too many players from the same country for stage " + stage + " (max " + limit + ")");
             }
         });
     }

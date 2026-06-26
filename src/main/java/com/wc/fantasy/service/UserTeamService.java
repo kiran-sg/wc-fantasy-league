@@ -8,7 +8,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -22,28 +25,54 @@ public class UserTeamService {
     private final PlayerRepository playerRepo;
     private final MatchPlayerStatsRepository statsRepo;
     private final UserTransferRecordRepository transferRecordRepo;
+    private final RoundConfigRepository roundConfigRepo;
 
     private static final BigDecimal BUDGET = BigDecimal.valueOf(105_000_000);
-
     private static final int UNLIMITED = Integer.MAX_VALUE;
 
-    private static final Map<String, Integer> FREE_TRANSFERS = Map.of(
-            "GROUP", UNLIMITED,
-            "R32",   UNLIMITED,
-            "R16",   4,
-            "QF",    4,
-            "SF",    5,
-            "FINAL", 6
-    );
+    // Fallback defaults used only when DB has no row for a stage
+    private static final Map<String, Integer> DEFAULT_FREE_TRANSFERS = Map.of(
+            "GROUP", UNLIMITED, "R32", 4, "R16", 4, "QF", 4, "SF", 5, "FINAL", 6);
+    private static final Map<String, Integer> DEFAULT_COUNTRY_LIMIT = Map.of(
+            "GROUP", 3, "R32", 3, "R16", 4, "QF", 5, "SF", 6, "FINAL", 8);
 
-    private static final Map<String, Integer> COUNTRY_LIMIT = Map.of(
-            "GROUP", 3,
-            "R32",   3,
-            "R16",   4,
-            "QF",    5,
-            "SF",    6,
-            "FINAL", 8
-    );
+    // ── Active round resolution ───────────────────────────────────────────────
+
+    public RoundConfig getActiveRoundConfig() {
+        return roundConfigRepo.findActiveRound().orElse(null);
+    }
+
+    public String resolveActiveStage() {
+        RoundConfig active = getActiveRoundConfig();
+        return active != null ? active.getStage() : null;
+    }
+
+    private RoundConfig configFor(String stage) {
+        return roundConfigRepo.findById(stage.toUpperCase()).orElse(null);
+    }
+
+    private int freeTransfersFor(String stage) {
+        RoundConfig c = configFor(stage);
+        return c != null ? c.getFreeTransfers() : DEFAULT_FREE_TRANSFERS.getOrDefault(stage, 2);
+    }
+
+    private int countryLimitFor(String stage) {
+        RoundConfig c = configFor(stage);
+        return c != null ? c.getCountryLimit() : DEFAULT_COUNTRY_LIMIT.getOrDefault(stage, 3);
+    }
+
+    private void assertTransferWindowOpen(String stage) {
+        RoundConfig c = configFor(stage);
+        if (c == null) return; // no config row → no window restriction
+        ZoneId tz = ZoneId.of(c.getWindowTimezone());
+        int hour = ZonedDateTime.now(tz).getHour();
+        if (hour < c.getWindowOpenHour() || hour >= c.getWindowCloseHour()) {
+            throw new IllegalStateException(
+                    "Transfer window is closed. Transfers are only allowed between "
+                    + c.getWindowOpenHour() + ":00 and " + c.getWindowCloseHour() + ":00 "
+                    + c.getWindowTimezone() + ".");
+        }
+    }
 
     // ── Get team ──────────────────────────────────────────────────────────────
 
@@ -59,7 +88,16 @@ public class UserTeamService {
                               List<Long> benchIds,       // 4
                               Long captainId,
                               Long viceCaptainId,
-                              String stage) {
+                              String stageHint,          // client hint — used only if no roundStart configured
+                              String formation) {        // e.g. "4-4-2"
+
+        // Derive the authoritative stage from round_config.roundStart.
+        // Fall back to the client-supplied hint only when no round has a roundStart set yet.
+        String stage = resolveActiveStage();
+        if (stage == null) stage = stageHint != null ? stageHint : "R32";
+        log.info("saveTeam: userId={} resolvedStage={} clientHint={}", userId, stage, stageHint);
+
+        assertTransferWindowOpen(stage);
 
         if (starterIds.size() != 11)
             throw new IllegalArgumentException("Must have exactly 11 starters");
@@ -76,12 +114,21 @@ public class UserTeamService {
         List<Player> all      = new ArrayList<>(starters);
         all.addAll(bench);
 
-        validatePositionQuota(starters, bench);
+        validatePositionQuota(starters, bench, formation);
         validateBudget(all);
         validateCountryLimit(starters, stage);
 
-        Player captain    = playerRepo.findById(captainId).orElseThrow();
-        Player viceCaptain = playerRepo.findById(viceCaptainId).orElseThrow();
+        // Auto-assign captain = most expensive starter, VC = second most expensive, if not supplied
+        List<Player> sortedByPrice = starters.stream()
+                .filter(p -> p.getPrice() != null)
+                .sorted((a, b) -> b.getPrice().compareTo(a.getPrice()))
+                .toList();
+        Player captain = (captainId != null)
+                ? playerRepo.findById(captainId).orElse(sortedByPrice.isEmpty() ? starters.get(0) : sortedByPrice.get(0))
+                : (sortedByPrice.isEmpty() ? starters.get(0) : sortedByPrice.get(0));
+        Player viceCaptain = (viceCaptainId != null)
+                ? playerRepo.findById(viceCaptainId).orElse(sortedByPrice.size() > 1 ? sortedByPrice.get(1) : captain)
+                : (sortedByPrice.size() > 1 ? sortedByPrice.get(1) : captain);
 
         AppUser user = userRepo.findById(userId).orElseThrow();
         Optional<UserTeam> existing = teamRepo.findByUserId(userId);
@@ -100,19 +147,20 @@ public class UserTeamService {
                     .filter(id -> !oldSquadIds.contains(id)).count();
 
             // Load or create the per-stage transfer record
+            final String stageFinal = stage;
             UserTransferRecord record = transferRecordRepo
-                    .findByUserIdAndStage(userId, stage)
+                    .findByUserIdAndStage(userId, stageFinal)
                     .orElseGet(() -> {
                         UserTransferRecord r = new UserTransferRecord();
                         r.setUser(user);
-                        r.setStage(stage);
+                        r.setStage(stageFinal);
                         return r;
                     });
 
             log.info("Transfer save: userId={} stage={} newTransfers={} oldSquad={} newAll={}",
                     userId, stage, newTransfers, oldSquadIds, allNewIds);
 
-            int free = FREE_TRANSFERS.getOrDefault(stage, 2);
+            int free = freeTransfersFor(stage);
             int previouslyMade = record.getTransfersMade() != null ? record.getTransfersMade() : 0;
             int previousPenalty = record.getPenaltyPoints() != null ? record.getPenaltyPoints() : 0;
             int totalThisStage = previouslyMade + newTransfers;
@@ -136,12 +184,14 @@ public class UserTeamService {
             old.setCaptain(captain);
             old.setViceCaptain(viceCaptain);
             old.setStage(stage);
+            if (formation != null && !formation.isBlank()) old.setFormation(formation);
             return teamRepo.save(old);
         }
 
         UserTeam team = new UserTeam();
         team.setUser(user);
         team.setStage(stage);
+        team.setFormation(formation != null && !formation.isBlank() ? formation : "4-4-2");
         team.setStarters(orderedList(starters, starterIds));
         team.setBench(orderedList(bench, benchIds));
         team.setCaptain(captain);
@@ -182,7 +232,7 @@ public class UserTeamService {
 
                 if (isCaptain) {
                     pts *= 2;
-                } else if (isVC && captainDNP && !Boolean.TRUE.equals(team.getManualChangesMade())) {
+                } else if (isVC && captainDNP) {
                     pts *= 2;
                 }
 
@@ -209,31 +259,11 @@ public class UserTeamService {
             userRepo.save(user);
         }
 
-        // Reset manualChangesMade after round completes
-        for (UserTeam team : teams) {
-            team.setManualChangesMade(false);
-            teamRepo.save(team);
-        }
     }
 
-    // ── Auto-sub: replace DNP starters with bench in order ───────────────────
-
+    // Points are calculated from the fixed 11 starters only — no auto-sub
     private List<Player> resolveEffectiveXI(UserTeam team, Map<Long, MatchPlayerStats> statsMap) {
-        if (Boolean.TRUE.equals(team.getManualChangesMade())) {
-            return team.getStarters();
-        }
-        List<Player> xi = new ArrayList<>(team.getStarters());
-        List<Player> bench = new ArrayList<>(team.getBench());
-
-        for (int i = 0; i < xi.size(); i++) {
-            Player starter = xi.get(i);
-            MatchPlayerStats stat = statsMap.get(starter.getId());
-            boolean dnp = stat == null || stat.getMinutesPlayed() == 0;
-            if (dnp && !bench.isEmpty()) {
-                xi.set(i, bench.remove(0));
-            }
-        }
-        return xi;
+        return team.getStarters();
     }
 
     // ── Points formula ────────────────────────────────────────────────────────
@@ -301,7 +331,23 @@ public class UserTeamService {
 
     // ── Validation ────────────────────────────────────────────────────────────
 
-    private void validatePositionQuota(List<Player> starters, List<Player> bench) {
+    // formation → [DEF, MID, FWD] counts for the XI (GK is always 1 in XI)
+    private static final java.util.Map<String, int[]> FORMATION_COUNTS = java.util.Map.of(
+        "4-4-2", new int[]{4, 4, 2},
+        "4-3-3", new int[]{4, 3, 3},
+        "4-5-1", new int[]{4, 5, 1},
+        "3-4-3", new int[]{3, 4, 3},
+        "3-5-2", new int[]{3, 5, 2},
+        "5-4-1", new int[]{5, 4, 1},
+        "5-3-2", new int[]{5, 3, 2}
+    );
+
+    private void validatePositionQuota(List<Player> starters, List<Player> bench, String formation) {
+        String f = (formation != null && FORMATION_COUNTS.containsKey(formation)) ? formation : "4-4-2";
+        int[] counts = FORMATION_COUNTS.get(f); // [DEF, MID, FWD] for XI
+        int xiDef = counts[0], xiMid = counts[1], xiFwd = counts[2];
+
+        // Squad of 15: 2 GK, (xiDef+1) DEF, (xiMid+1) MID, (xiFwd+1) FWD
         List<Player> all = new ArrayList<>(starters);
         all.addAll(bench);
 
@@ -310,21 +356,21 @@ public class UserTeamService {
         long mid = all.stream().filter(p -> "MID".equals(p.getPosition())).count();
         long fwd = all.stream().filter(p -> "FWD".equals(p.getPosition())).count();
 
-        if (gk != 2)  throw new IllegalArgumentException("Squad must have exactly 2 GKs (got " + gk + ")");
-        if (def != 5) throw new IllegalArgumentException("Squad must have exactly 5 DEFs (got " + def + ")");
-        if (mid != 5) throw new IllegalArgumentException("Squad must have exactly 5 MIDs (got " + mid + ")");
-        if (fwd != 3) throw new IllegalArgumentException("Squad must have exactly 3 FWDs (got " + fwd + ")");
+        if (gk != 2)           throw new IllegalArgumentException("Squad must have exactly 2 GKs (got " + gk + ")");
+        if (def != xiDef + 1)  throw new IllegalArgumentException("Formation " + f + " requires " + (xiDef+1) + " DEFs in squad (got " + def + ")");
+        if (mid != xiMid + 1)  throw new IllegalArgumentException("Formation " + f + " requires " + (xiMid+1) + " MIDs in squad (got " + mid + ")");
+        if (fwd != xiFwd + 1)  throw new IllegalArgumentException("Formation " + f + " requires " + (xiFwd+1) + " FWDs in squad (got " + fwd + ")");
 
-        // Starting XI formation constraints
+        // Starting XI must exactly match the formation
         long startGk  = starters.stream().filter(p -> "GK".equals(p.getPosition())).count();
         long startDef = starters.stream().filter(p -> "DEF".equals(p.getPosition())).count();
         long startMid = starters.stream().filter(p -> "MID".equals(p.getPosition())).count();
         long startFwd = starters.stream().filter(p -> "FWD".equals(p.getPosition())).count();
 
-        if (startGk < 1)  throw new IllegalArgumentException("Starting XI must have at least 1 GK");
-        if (startDef < 3) throw new IllegalArgumentException("Starting XI must have at least 3 DEFs");
-        if (startMid < 2) throw new IllegalArgumentException("Starting XI must have at least 2 MIDs");
-        if (startFwd < 1) throw new IllegalArgumentException("Starting XI must have at least 1 FWD");
+        if (startGk != 1)      throw new IllegalArgumentException("Starting XI must have exactly 1 GK");
+        if (startDef != xiDef) throw new IllegalArgumentException("Formation " + f + " requires " + xiDef + " DEFs in XI (got " + startDef + ")");
+        if (startMid != xiMid) throw new IllegalArgumentException("Formation " + f + " requires " + xiMid + " MIDs in XI (got " + startMid + ")");
+        if (startFwd != xiFwd) throw new IllegalArgumentException("Formation " + f + " requires " + xiFwd + " FWDs in XI (got " + startFwd + ")");
     }
 
     private void validateBudget(List<Player> players) {
@@ -338,17 +384,13 @@ public class UserTeamService {
     }
 
     private void validateCountryLimit(List<Player> starters, String stage) {
-        int limit = COUNTRY_LIMIT.getOrDefault(stage, 3);
-        long uniqueTeams = starters.stream().map(p -> p.getTeam().getId()).distinct().count();
-        if (uniqueTeams == 0) return;
-        int effectiveLimit = (int) Math.max(limit, Math.ceil(15.0 / uniqueTeams));
-
+        int limit = countryLimitFor(stage);
         Map<Long, Long> countPerTeam = starters.stream()
                 .collect(Collectors.groupingBy(p -> p.getTeam().getId(), Collectors.counting()));
         countPerTeam.forEach((teamId, count) -> {
-            if (count > effectiveLimit) {
+            if (count > limit) {
                 throw new IllegalArgumentException(
-                        "Too many players from one country (max " + effectiveLimit + " for stage " + stage + ")");
+                        "Too many players from one country (max " + limit + " for stage " + stage + ")");
             }
         });
     }

@@ -41,6 +41,7 @@ public class UserTeam {
     @JoinColumn(name = "vice_captain_id")
     private Player viceCaptain;
 
+    private String formation = "4-4-2";
     private Boolean manualChangesMade = false;
     private Integer transfersMadeThisStage = 0;
     private Integer penaltyPoints = 0;

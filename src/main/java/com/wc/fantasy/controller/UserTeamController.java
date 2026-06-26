@@ -29,13 +29,14 @@ public class UserTeamController {
         Long captainId   = ((Number) body.get("captainId")).longValue();
         Long vcId        = ((Number) body.get("viceCaptainId")).longValue();
         String stage     = (String) body.getOrDefault("stage", "R32");
+        String formation = (String) body.getOrDefault("formation", "4-4-2");
 
         List<Long> starterIds = ((List<Number>) body.get("starterIds"))
                 .stream().map(Number::longValue).toList();
         List<Long> benchIds = ((List<Number>) body.get("benchIds"))
                 .stream().map(Number::longValue).toList();
 
-        return teamService.saveTeam(userId, starterIds, benchIds, captainId, vcId, stage);
+        return teamService.saveTeam(userId, starterIds, benchIds, captainId, vcId, stage, formation);
     }
 
     @GetMapping("/points")

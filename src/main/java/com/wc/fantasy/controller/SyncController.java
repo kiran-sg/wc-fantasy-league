@@ -59,7 +59,9 @@ public class SyncController {
 
     @GetMapping("/all")
     public Map<String, Object> syncAll() {
-        return dataSyncService.syncAll();
+        Map<String, Object> result = dataSyncService.syncAll();
+        dataSyncService.refreshRoundStarts();
+        return result;
     }
 
     @GetMapping("/teams")
@@ -69,12 +71,19 @@ public class SyncController {
 
     @GetMapping("/matches")
     public Map<String, Object> syncMatches() {
-        return Map.of("matches", dataSyncService.syncMatches());
+        int count = dataSyncService.syncMatches();
+        dataSyncService.refreshRoundStarts();
+        return Map.of("matches", count);
     }
 
     @GetMapping("/players")
     public Map<String, Object> syncPlayers() {
         return Map.of("players", dataSyncService.syncPlayers());
+    }
+
+    @GetMapping("/knockout-teams")
+    public Map<String, Object> syncKnockoutTeams() {
+        return dataSyncService.syncKnockoutTeams();
     }
 
     @GetMapping("/seed-squad")

@@ -1,5 +1,7 @@
 package com.wc.fantasy.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wc.fantasy.model.*;
 import com.wc.fantasy.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -21,12 +23,26 @@ public class DataSyncService {
     private final MatchRepository matchRepo;
     private final PlayerRepository playerRepo;
     private final FifaScraperService fifaScraperService;
+    private final RoundConfigRepository roundConfigRepo;
+    private final UserSquadRepository userSquadRepo;
+    private final MatchPlayerStatsRepository matchStatsRepo;
+    private final UserTeamMatchPointsRepository userTeamMatchPointsRepo;
 
     private static final String TEAMS_URL = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/football.teams.json";
     private static final String STADIUMS_URL = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/football.stadiums.json";
     private static final String MATCHES_URL = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/football.matches.json";
     private static final String ESPN_TEAMS_URL = "https://www.espn.com/soccer/teams/_/league/fifa.world";
-    private static final String ESPN_SQUAD_URL = "https://www.espn.com/soccer/team/squad/_/id/";
+    private static final String ESPN_SQUAD_URL  = "https://www.espn.com/soccer/team/squad/_/id/";
+    private static final String ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=";
+
+    // Dates covering R32 through Final
+    private static final List<String> KNOCKOUT_DATES = List.of(
+        "20260628","20260629","20260630","20260701","20260702","20260703","20260704",
+        "20260705","20260706","20260707","20260708","20260709",
+        "20260711","20260712","20260713",
+        "20260715","20260716",
+        "20260718","20260719"
+    );
 
     private static final Map<String, String> OFFICIAL_UTC = Map.ofEntries(
         Map.entry("1","2026-06-11T19:00"), Map.entry("2","2026-06-12T02:00"), Map.entry("3","2026-06-12T19:00"),
@@ -118,6 +134,22 @@ public class DataSyncService {
         int matches = syncMatches();
         int players = syncPlayers();
         return Map.of("teams", teams, "matches", matches, "players", players);
+    }
+
+    // Called after any match sync — fills roundStart for rows where it is still null
+    public void refreshRoundStarts() {
+        for (RoundConfig rc : roundConfigRepo.findAll()) {
+            if (rc.getRoundStart() != null) continue; // preserve manual edits
+            matchRepo.findAll().stream()
+                    .filter(m -> rc.getStage().equalsIgnoreCase(m.getStage()) && m.getMatchTime() != null)
+                    .map(com.wc.fantasy.model.Match::getMatchTime)
+                    .min(java.time.LocalDateTime::compareTo)
+                    .ifPresent(earliest -> {
+                        rc.setRoundStart(earliest);
+                        roundConfigRepo.save(rc);
+                        log.info("refreshRoundStarts: stage={} roundStart={}", rc.getStage(), earliest);
+                    });
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -400,6 +432,126 @@ public class DataSyncService {
             log.warn("Failed to fetch squad for ESPN team {}: {}", espnTeamId, e.getMessage());
             return List.of();
         }
+    }
+
+    // ── Sync knockout matches fresh from ESPN (delete + re-insert) ───────────
+
+    public Map<String, Object> syncKnockoutTeams() {
+        ObjectMapper mapper = new ObjectMapper();
+
+        // 1. Delete all existing knockout matches (R32/R16/QF/SF/FINAL) and their dependents
+        List<Long> knockoutIds = matchRepo.findAll().stream()
+                .filter(m -> !("GROUP".equals(m.getStage())))
+                .map(Match::getId)
+                .toList();
+        for (Long mid : knockoutIds) {
+            userTeamMatchPointsRepo.deleteAll(userTeamMatchPointsRepo.findByMatchId(mid));
+            matchStatsRepo.deleteAll(matchStatsRepo.findByMatchId(mid));
+            userSquadRepo.deleteAll(userSquadRepo.findByMatchId(mid));
+        }
+        matchRepo.deleteAllById(knockoutIds);
+        log.info("Deleted {} existing knockout matches", knockoutIds.size());
+
+        // 2. Build team lookup by normalised name
+        Map<String, Team> nameToTeam = new HashMap<>();
+        teamRepo.findAll().forEach(t -> nameToTeam.put(normalizeTeamName(t.getName()), t));
+
+        // 3. Fetch from ESPN and insert fresh rows
+        int inserted = 0;
+        int skipped  = 0;
+        for (String date : KNOCKOUT_DATES) {
+            try {
+                String json = webClient().get().uri(ESPN_SCOREBOARD + date)
+                        .retrieve().bodyToMono(String.class).block();
+                if (json == null) continue;
+
+                JsonNode events = mapper.readTree(json).path("events");
+                for (JsonNode event : events) {
+                    JsonNode comp = event.path("competitions").path(0);
+                    String dateStr = comp.path("date").asText("");
+                    if (dateStr.isBlank()) continue;
+
+                    LocalDateTime espnTime;
+                    try {
+                        espnTime = java.time.OffsetDateTime.parse(dateStr)
+                                .atZoneSameInstant(java.time.ZoneId.of("Asia/Kolkata"))
+                                .toLocalDateTime();
+                    } catch (Exception e) { continue; }
+
+                    String homeTeamName = null, awayTeamName = null;
+                    for (JsonNode c : comp.path("competitors")) {
+                        String tname = c.path("team").path("displayName").asText("");
+                        if (c.path("homeAway").asText().equals("home")) homeTeamName = tname;
+                        else awayTeamName = tname;
+                    }
+                    if (homeTeamName == null || awayTeamName == null) continue;
+
+                    Team teamA = nameToTeam.get(normalizeTeamName(homeTeamName));
+                    Team teamB = nameToTeam.get(normalizeTeamName(awayTeamName));
+                    if (teamA == null) log.warn("Team not found in DB: {}", homeTeamName);
+                    if (teamB == null) log.warn("Team not found in DB: {}", awayTeamName);
+
+                    // Resolve stage from ESPN notes or date range
+                    String espnNote = event.path("competitions").path(0)
+                            .path("notes").path(0).path("headline").asText("").toLowerCase();
+                    String stage = resolveStageFromEspnNote(espnNote, espnTime);
+
+                    String venue = comp.path("venue").path("fullName").asText("TBD");
+                    String espnId = event.path("id").asText("");
+
+                    Match match = new Match();
+                    match.setTeamA(teamA);
+                    match.setTeamB(teamB);
+                    match.setMatchTime(espnTime);
+                    match.setVenue(venue + " [#espn" + espnId + "]");
+                    match.setStage(stage);
+                    match.setStatus("UPCOMING");
+                    if (teamA == null) match.setTeamALabel(homeTeamName);
+                    if (teamB == null) match.setTeamBLabel(awayTeamName);
+                    matchRepo.save(match);
+                    log.info("Inserted {} match: {} vs {} at {}", stage, homeTeamName, awayTeamName, espnTime);
+                    inserted++;
+                }
+            } catch (Exception e) {
+                log.error("Failed to fetch ESPN scoreboard for date {}: {}", date, e.getMessage());
+                skipped++;
+            }
+        }
+        return Map.of("deleted", knockoutIds.size(), "inserted", inserted, "dateErrors", skipped);
+    }
+
+    private String resolveStageFromEspnNote(String note, LocalDateTime time) {
+        if (note.contains("round of 32") || note.contains("r32")) return "R32";
+        if (note.contains("round of 16") || note.contains("r16")) return "R16";
+        if (note.contains("quarterfinal") || note.contains("quarter-final")) return "QF";
+        if (note.contains("semifinal") || note.contains("semi-final")) return "SF";
+        if (note.contains("third") || note.contains("3rd")) return "SF";
+        if (note.contains("final")) return "FINAL";
+        // Fallback by date range
+        LocalDate d = time.toLocalDate();
+        if (!d.isBefore(LocalDate.of(2026, 6, 28)) && !d.isAfter(LocalDate.of(2026, 7, 4))) return "R32";
+        if (!d.isBefore(LocalDate.of(2026, 7, 5)) && !d.isAfter(LocalDate.of(2026, 7, 9))) return "R16";
+        if (!d.isBefore(LocalDate.of(2026, 7, 11)) && !d.isAfter(LocalDate.of(2026, 7, 13))) return "QF";
+        if (!d.isBefore(LocalDate.of(2026, 7, 15)) && !d.isAfter(LocalDate.of(2026, 7, 16))) return "SF";
+        return "FINAL";
+    }
+
+    private String normalizeTeamName(String name) {
+        String s = name.toLowerCase().trim()
+                .replaceAll("[áàâãä]", "a").replaceAll("[éèêë]", "e")
+                .replaceAll("[íìîï]", "i").replaceAll("[óòôõö]", "o")
+                .replaceAll("[úùûü]", "u").replaceAll("[ñ]", "n");
+        s = s.replace("czechia", "czech republic")
+             .replace("turkiye", "turkey").replace("türkiye", "turkey")
+             .replace("bosnia-herzegovina", "bosnia and herzegovina")
+             .replace("bosnia herzegovina", "bosnia and herzegovina")
+             .replace("congo dr", "democratic republic of the congo")
+             .replace("cote d'ivoire", "ivory coast").replace("cote divoire", "ivory coast");
+        if (s.contains("korea") && !s.contains("south")) s = "south korea";
+        if (s.contains("ivory coast")) s = "ivory coast";
+        if (s.contains("united states") || s.equals("usa")) s = "united states";
+        if (s.contains("democratic republic") && s.contains("congo")) s = "democratic republic of the congo";
+        return s;
     }
 
     // Prefer the "type" field from the source JSON; fall back to match-ID range if absent.

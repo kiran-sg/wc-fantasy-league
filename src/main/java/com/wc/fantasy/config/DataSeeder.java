@@ -21,10 +21,17 @@ public class DataSeeder implements CommandLineRunner {
     private final PlayerRepository playerRepo;
     private final MatchRepository matchRepo;
     private final MatchSyncService matchSyncService;
+    private final RoundConfigRepository roundConfigRepo;
+    private final com.wc.fantasy.service.DataSyncService dataSyncService;
 
     @Override
     public void run(String... args) {
-        if (teamRepo.count() > 0) return;
+        seedRoundConfig();
+        if (teamRepo.count() > 0) {
+            // Matches already exist — back-fill any roundStart that is still null
+            dataSyncService.refreshRoundStarts();
+            return;
+        }
 
         // Try sync from prediction API, fallback to manual seed
         try {
@@ -35,6 +42,9 @@ public class DataSeeder implements CommandLineRunner {
             seedDemoData();
         }
 
+        // After matches are in, fill roundStart for each stage
+        dataSyncService.refreshRoundStarts();
+
         // Create demo user
         if (userRepo.findByUsername("demo").isEmpty()) {
             AppUser demo = new AppUser();
@@ -42,6 +52,45 @@ public class DataSeeder implements CommandLineRunner {
             demo.setDisplayName("Demo User");
             userRepo.save(demo);
         }
+    }
+
+    // For each round_config row, set roundStart = earliest matchTime of that stage (if not already set)
+    private void backfillRoundStarts() {
+        for (RoundConfig rc : roundConfigRepo.findAll()) {
+            if (rc.getRoundStart() != null) continue; // already set — don't overwrite manual edits
+            matchRepo.findAll().stream()
+                    .filter(m -> rc.getStage().equalsIgnoreCase(m.getStage()) && m.getMatchTime() != null)
+                    .map(Match::getMatchTime)
+                    .min(LocalDateTime::compareTo)
+                    .ifPresent(earliest -> {
+                        rc.setRoundStart(earliest);
+                        roundConfigRepo.save(rc);
+                        log.info("Set roundStart={} for stage={}", earliest, rc.getStage());
+                    });
+        }
+    }
+
+    private void seedRoundConfig() {
+        // Upsert — only insert rows that don't already exist, so manual edits are preserved
+        seedConfigIfAbsent("R32",   4,  3, 12, 19, "Asia/Kolkata");
+        seedConfigIfAbsent("R16",   4,  4, 12, 19, "Asia/Kolkata");
+        seedConfigIfAbsent("QF",    4,  5, 12, 19, "Asia/Kolkata");
+        seedConfigIfAbsent("SF",    5,  6, 12, 19, "Asia/Kolkata");
+        seedConfigIfAbsent("FINAL", 6,  8, 12, 19, "Asia/Kolkata");
+        log.info("Round config seeded");
+    }
+
+    private void seedConfigIfAbsent(String stage, int freeTransfers, int countryLimit,
+                                     int openHour, int closeHour, String tz) {
+        if (roundConfigRepo.existsById(stage)) return;
+        RoundConfig rc = new RoundConfig();
+        rc.setStage(stage);
+        rc.setFreeTransfers(freeTransfers);
+        rc.setCountryLimit(countryLimit);
+        rc.setWindowOpenHour(openHour);
+        rc.setWindowCloseHour(closeHour);
+        rc.setWindowTimezone(tz);
+        roundConfigRepo.save(rc);
     }
 
     private void seedDemoData() {
