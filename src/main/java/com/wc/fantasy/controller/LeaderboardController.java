@@ -6,7 +6,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/leaderboard")
@@ -19,10 +18,5 @@ public class LeaderboardController {
     @GetMapping
     public List<AppUser> getOverallLeaderboard() {
         return leaderboardService.getOverallLeaderboard();
-    }
-
-    @GetMapping("/round/{matchId}")
-    public List<Map<String, Object>> getRoundLeaderboard(@PathVariable Long matchId) {
-        return leaderboardService.getRoundLeaderboard(matchId);
     }
 }
