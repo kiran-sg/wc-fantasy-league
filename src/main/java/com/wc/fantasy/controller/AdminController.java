@@ -32,6 +32,9 @@ public class AdminController {
     private final FifaScraperService fifaScraperService;
     private final com.wc.fantasy.repository.UserRepository userRepo;
     private final com.wc.fantasy.repository.PlayerRepository playerRepo;
+    private final com.wc.fantasy.repository.UserTeamRepository teamRepo;
+    private final com.wc.fantasy.repository.UserTeamMatchPointsRepository matchPointsRepo;
+    private final com.wc.fantasy.repository.UserTransferRecordRepository transferRecordRepo;
 
     // ── User management ──────────────────────────────────────────────────────
 
@@ -92,6 +95,23 @@ public class AdminController {
                     "id", p.getId(), "name", p.getName(),
                     "price", p.getPrice().longValue()));
         }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
+    }
+
+    @DeleteMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> deleteUser(@PathVariable Long id) {
+        com.wc.fantasy.model.AppUser user = userRepo.findById(id).orElse(null);
+        if (user == null) return ResponseEntity.notFound().build();
+        if (Boolean.TRUE.equals(user.getIsAdmin()))
+            return ResponseEntity.badRequest().body(Map.of("error", "Cannot delete admin users"));
+        // Delete transfer records
+        transferRecordRepo.deleteAll(transferRecordRepo.findByUserId(id));
+        // Delete match points + team
+        teamRepo.findByUserId(id).ifPresent(team -> {
+            matchPointsRepo.deleteAll(matchPointsRepo.findByUserTeamId(team.getId()));
+            teamRepo.delete(team);
+        });
+        userRepo.delete(user);
+        return ResponseEntity.ok(Map.of("deleted", id));
     }
 
     @DeleteMapping("/users")
