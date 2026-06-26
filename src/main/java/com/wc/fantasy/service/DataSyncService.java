@@ -44,6 +44,18 @@ public class DataSyncService {
         "20260718","20260719"
     );
 
+    // All match dates: group stage (Jun 11-27) + knockout (Jun 28-Jul 19)
+    private static final List<String> ALL_MATCH_DATES = List.of(
+        "20260611","20260612","20260613","20260614","20260615","20260616","20260617",
+        "20260618","20260619","20260620","20260621","20260622","20260623","20260624",
+        "20260625","20260626","20260627",
+        "20260628","20260629","20260630","20260701","20260702","20260703","20260704",
+        "20260705","20260706","20260707","20260708","20260709",
+        "20260711","20260712","20260713",
+        "20260715","20260716",
+        "20260718","20260719"
+    );
+
     private static final Map<String, String> OFFICIAL_UTC = Map.ofEntries(
         Map.entry("1","2026-06-11T19:00"), Map.entry("2","2026-06-12T02:00"), Map.entry("3","2026-06-12T19:00"),
         Map.entry("4","2026-06-13T01:00"), Map.entry("5","2026-06-13T04:00"), Map.entry("6","2026-06-13T19:00"),
@@ -185,113 +197,99 @@ public class DataSyncService {
         return teamRepo.findAll().size();
     }
 
-    @SuppressWarnings("unchecked")
     public int syncMatches() {
-        List<Map<String, Object>> teamsData = fetchList(TEAMS_URL);
-        List<Map<String, Object>> stadiums = fetchList(STADIUMS_URL);
-        List<Map<String, Object>> matches = fetchList(MATCHES_URL);
-        if (teamsData == null || stadiums == null || matches == null) return 0;
+        ObjectMapper mapper = new ObjectMapper();
+        ZoneId ist = ZoneId.of("Asia/Kolkata");
 
-        Map<String, String> teamIdToCode = new HashMap<>();
-        for (Map<String, Object> t : teamsData) teamIdToCode.put(String.valueOf(t.get("id")), (String) t.get("fifa_code"));
-        Map<String, String> stadiumMap = new HashMap<>();
-        for (Map<String, Object> s : stadiums) stadiumMap.put(String.valueOf(s.get("id")), (String) s.get("name_en"));
+        // Truncate matches and all dependent tables, then re-insert fresh from ESPN
+        userTeamMatchPointsRepo.deleteAll();
+        matchStatsRepo.deleteAll();
+        userSquadRepo.deleteAll();
+        matchRepo.deleteAll();
+        log.info("Truncated matches table before fresh ESPN sync");
 
-        Map<String, Team> codeToTeam = new HashMap<>();
-        teamRepo.findAll().forEach(t -> { if (t.getCode() != null) codeToTeam.put(t.getCode(), t); });
+        // Build team lookup by normalised name
+        Map<String, Team> nameToTeam = new HashMap<>();
+        teamRepo.findAll().forEach(t -> nameToTeam.put(normalizeTeamName(t.getName()), t));
 
-        // Upsert keyed by match ID stored in venue "[#<id>]", with fallback by teamA+teamB+time
-        // for existing matches saved before this fix was applied.
-        Map<String, Match> existingById = new HashMap<>();
-        Map<String, Match> existingByTeamTime = new HashMap<>();
-        matchRepo.findAll().forEach(ex -> {
-            if (ex.getVenue() != null) {
-                java.util.regex.Matcher vm = java.util.regex.Pattern.compile("\\[#(\\d+)\\]").matcher(ex.getVenue());
-                if (vm.find()) existingById.put(vm.group(1), ex);
-            }
-            if (ex.getTeamA() != null && ex.getTeamB() != null && ex.getMatchTime() != null) {
-                String k = ex.getTeamA().getId() + "_" + ex.getTeamB().getId() + "_" + ex.getMatchTime();
-                existingByTeamTime.put(k, ex);
-            }
-        });
+        int inserted = 0, dateErrors = 0;
 
-        int count = 0;
-        int updated = 0;
-        for (Map<String, Object> m : matches) {
-            String matchId   = String.valueOf(m.get("id"));
-            String homeIdStr = String.valueOf(m.get("home_team_id"));
-            String awayIdStr = String.valueOf(m.get("away_team_id"));
-            String homeCode  = teamIdToCode.get(homeIdStr);
-            String awayCode  = teamIdToCode.get(awayIdStr);
-            Team teamA = codeToTeam.get(homeCode);
-            Team teamB = codeToTeam.get(awayCode);
+        for (String date : ALL_MATCH_DATES) {
+            try {
+                String json = webClient().get().uri(ESPN_SCOREBOARD + date)
+                        .retrieve().bodyToMono(String.class).block();
+                if (json == null) continue;
 
-            // For knockout matches teams are TBD (home_team_id=0) — still insert the slot
-            boolean teamsKnown = teamA != null && teamB != null;
+                for (JsonNode event : mapper.readTree(json).path("events")) {
+                    JsonNode comp = event.path("competitions").path(0);
+                    String dateStr = comp.path("date").asText("");
+                    if (dateStr.isBlank()) continue;
 
-            String utcStr = OFFICIAL_UTC.get(matchId);
-            LocalDateTime matchTime = null;
-            if (utcStr != null) {
-                matchTime = LocalDateTime.parse(utcStr, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"));
-            } else {
-                // Fallback: parse local_date from source JSON ("MM/dd/yyyy HH:mm")
-                String localDate = (String) m.get("local_date");
-                if (localDate != null && !localDate.isBlank()) {
+                    LocalDateTime matchTime;
                     try {
-                        matchTime = LocalDateTime.parse(localDate.trim(),
-                                DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm"));
-                    } catch (Exception ignored) {}
+                        matchTime = java.time.OffsetDateTime.parse(dateStr)
+                                .atZoneSameInstant(ist).toLocalDateTime();
+                    } catch (Exception e) { continue; }
+
+                    String homeTeamName = null, awayTeamName = null;
+                    for (JsonNode c : comp.path("competitors")) {
+                        String tname = c.path("team").path("displayName").asText("");
+                        if (c.path("homeAway").asText().equals("home")) homeTeamName = tname;
+                        else awayTeamName = tname;
+                    }
+                    if (homeTeamName == null || awayTeamName == null) continue;
+
+                    Team teamA = nameToTeam.get(normalizeTeamName(homeTeamName));
+                    Team teamB = nameToTeam.get(normalizeTeamName(awayTeamName));
+                    if (teamA == null) log.warn("Team not found in DB: {}", homeTeamName);
+                    if (teamB == null) log.warn("Team not found in DB: {}", awayTeamName);
+
+                    String seasonSlug = event.path("season").path("slug").asText("").toLowerCase();
+                    String espnNote   = comp.path("notes").path(0).path("headline").asText("").toLowerCase();
+                    String stage      = resolveStageFromSlugOrNote(seasonSlug, espnNote, matchTime);
+                    String venue      = comp.path("venue").path("fullName").asText("TBD");
+                    String espnId     = event.path("id").asText("");
+
+                    String espnState = comp.path("status").path("type").path("name").asText("STATUS_SCHEDULED");
+                    String status;
+                    if (espnState.contains("IN_PROGRESS") || espnState.contains("HALFTIME")) status = "LIVE";
+                    else if (espnState.contains("FINAL") || espnState.contains("FULL_TIME")) status = "COMPLETED";
+                    else status = "UPCOMING";
+
+                    Integer scoreA = null, scoreB = null;
+                    if ("COMPLETED".equals(status) || "LIVE".equals(status)) {
+                        for (JsonNode c : comp.path("competitors")) {
+                            int sc = c.path("score").asInt(-1);
+                            if (sc >= 0) {
+                                if (c.path("homeAway").asText().equals("home")) scoreA = sc;
+                                else scoreB = sc;
+                            }
+                        }
+                    }
+
+                    Match match = new Match();
+                    match.setTeamA(teamA);
+                    match.setTeamB(teamB);
+                    match.setMatchTime(matchTime);
+                    match.setVenue(venue + " [#espn" + espnId + "]");
+                    match.setStage(stage);
+                    match.setStatus(status);
+                    if (scoreA != null) match.setScoreA(scoreA);
+                    if (scoreB != null) match.setScoreB(scoreB);
+                    if (teamA == null) match.setTeamALabel(homeTeamName);
+                    if (teamB == null) match.setTeamBLabel(awayTeamName);
+                    matchRepo.save(match);
+                    log.info("Inserted {} match: {} vs {} at {}", stage, homeTeamName, awayTeamName, matchTime);
+                    inserted++;
                 }
-            }
-            if (matchTime == null) continue; // skip only if truly no time available
-
-            String stage = resolveStage(m, matchId);
-            String venue = stadiumMap.getOrDefault(String.valueOf(m.get("stadium_id")), "TBD")
-                           + " [#" + matchId + "]";
-
-            // Find existing — prefer [#id] key, fall back to team+time for pre-fix rows
-            String teamTimeKey = teamsKnown && matchTime != null
-                    ? teamA.getId() + "_" + teamB.getId() + "_" + matchTime
-                    : null;
-            Match existing = existingById.get(matchId);
-            if (existing == null && teamTimeKey != null) existing = existingByTeamTime.get(teamTimeKey);
-
-            if (existing != null) {
-                boolean changed = false;
-                // Correct stage if it was previously hardcoded as GROUP
-                if (!stage.equals(existing.getStage())) { existing.setStage(stage); changed = true; }
-                // Fill in teams if they've now been determined
-                if (teamsKnown && existing.getTeamA() == null) { existing.setTeamA(teamA); changed = true; }
-                if (teamsKnown && existing.getTeamB() == null) { existing.setTeamB(teamB); changed = true; }
-                // Update TBD labels
-                String newLabelA = (String) m.get("home_team_label");
-                String newLabelB = (String) m.get("away_team_label");
-                if (newLabelA != null && !newLabelA.equals(existing.getTeamALabel())) { existing.setTeamALabel(newLabelA); changed = true; }
-                if (newLabelB != null && !newLabelB.equals(existing.getTeamBLabel())) { existing.setTeamBLabel(newLabelB); changed = true; }
-                // Stamp [#matchId] on venue if it's missing (backfills pre-fix rows)
-                if (existing.getVenue() == null || !existing.getVenue().contains("[#" + matchId + "]")) {
-                    String baseVenue = existing.getVenue() != null
-                            ? existing.getVenue().replaceAll("\\s*\\[#\\d+\\]", "").trim()
-                            : venue.replaceAll("\\s*\\[#\\d+\\]", "").trim();
-                    existing.setVenue(baseVenue + " [#" + matchId + "]");
-                    changed = true;
-                }
-                if (changed) { matchRepo.save(existing); updated++; }
-            } else {
-                Match match = new Match();
-                match.setTeamA(teamA);  // null for TBD — filled when teams qualify
-                match.setTeamB(teamB);
-                match.setMatchTime(matchTime);
-                match.setVenue(venue);
-                match.setStage(stage);
-                match.setStatus("UPCOMING");
-                match.setTeamALabel((String) m.get("home_team_label"));
-                match.setTeamBLabel((String) m.get("away_team_label"));
-                matchRepo.save(match);
-                count++;
+            } catch (Exception e) {
+                log.error("Failed ESPN scoreboard for date {}: {}", date, e.getMessage());
+                dateErrors++;
             }
         }
-        log.info("Synced {} new matches, {} corrections", count, updated);
+
+        log.info("syncMatches fresh from ESPN: {} inserted, {} dateErrors", inserted, dateErrors);
+        refreshRoundStarts();
         return (int) matchRepo.count();
     }
 
@@ -491,10 +489,11 @@ public class DataSyncService {
                     if (teamA == null) log.warn("Team not found in DB: {}", homeTeamName);
                     if (teamB == null) log.warn("Team not found in DB: {}", awayTeamName);
 
-                    // Resolve stage from ESPN notes or date range
-                    String espnNote = event.path("competitions").path(0)
+                    // Resolve stage from ESPN season slug, notes, or date range
+                    String seasonSlugKo = event.path("season").path("slug").asText("").toLowerCase();
+                    String espnNoteKo   = event.path("competitions").path(0)
                             .path("notes").path(0).path("headline").asText("").toLowerCase();
-                    String stage = resolveStageFromEspnNote(espnNote, espnTime);
+                    String stage = resolveStageFromSlugOrNote(seasonSlugKo, espnNoteKo, espnTime);
 
                     String venue = comp.path("venue").path("fullName").asText("TBD");
                     String espnId = event.path("id").asText("");
@@ -520,20 +519,35 @@ public class DataSyncService {
         return Map.of("deleted", knockoutIds.size(), "inserted", inserted, "dateErrors", skipped);
     }
 
-    private String resolveStageFromEspnNote(String note, LocalDateTime time) {
+    private String resolveStageFromSlugOrNote(String slug, String note, LocalDateTime time) {
+        // 1. ESPN season slug — most reliable (e.g. "round-of-32", "group-stage", "quarterfinals")
+        if (slug.contains("group"))        return "GROUP";
+        if (slug.contains("round-of-32") || slug.contains("round of 32")) return "R32";
+        if (slug.contains("round-of-16") || slug.contains("round of 16")) return "R16";
+        if (slug.contains("quarterfinal")) return "QF";
+        if (slug.contains("semifinal"))    return "SF";
+        if (slug.contains("third"))        return "SF";
+        if (slug.contains("final"))        return "FINAL";
+        // 2. ESPN notes headline
+        if (note.contains("group"))        return "GROUP";
         if (note.contains("round of 32") || note.contains("r32")) return "R32";
         if (note.contains("round of 16") || note.contains("r16")) return "R16";
         if (note.contains("quarterfinal") || note.contains("quarter-final")) return "QF";
-        if (note.contains("semifinal") || note.contains("semi-final")) return "SF";
+        if (note.contains("semifinal")    || note.contains("semi-final"))    return "SF";
         if (note.contains("third") || note.contains("3rd")) return "SF";
         if (note.contains("final")) return "FINAL";
-        // Fallback by date range
+        // 3. Date-range fallback (last resort)
         LocalDate d = time.toLocalDate();
+        if (!d.isAfter(LocalDate.of(2026, 6, 27))) return "GROUP";
         if (!d.isBefore(LocalDate.of(2026, 6, 28)) && !d.isAfter(LocalDate.of(2026, 7, 4))) return "R32";
         if (!d.isBefore(LocalDate.of(2026, 7, 5)) && !d.isAfter(LocalDate.of(2026, 7, 9))) return "R16";
         if (!d.isBefore(LocalDate.of(2026, 7, 11)) && !d.isAfter(LocalDate.of(2026, 7, 13))) return "QF";
         if (!d.isBefore(LocalDate.of(2026, 7, 15)) && !d.isAfter(LocalDate.of(2026, 7, 16))) return "SF";
         return "FINAL";
+    }
+
+    private String resolveStageFromEspnNote(String note, LocalDateTime time) {
+        return resolveStageFromSlugOrNote("", note, time);
     }
 
     private String normalizeTeamName(String name) {

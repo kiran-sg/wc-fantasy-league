@@ -186,6 +186,16 @@ public class AdminController {
         Match match = matchRepo.findById(matchId)
                 .orElseThrow(() -> new IllegalArgumentException("Match not found"));
 
+        // Block fetch until at least 1.5 hours after kick-off
+        if (match.getMatchTime() != null) {
+            java.time.LocalDateTime earliest = match.getMatchTime().plusMinutes(90);
+            if (java.time.LocalDateTime.now().isBefore(earliest)) {
+                long minsLeft = java.time.Duration.between(java.time.LocalDateTime.now(), earliest).toMinutes() + 1;
+                return Map.of("status", "error",
+                        "message", "Too early — fetch available in " + minsLeft + " min (1.5 hrs after kick-off).");
+            }
+        }
+
         List<MatchPlayerStats> stats = scraperService.fetchAndBuildStats(match);
         if (stats.isEmpty()) {
             return Map.of("status", "error", "message", "Could not fetch match data from ESPN. Match may not be finished yet.");
