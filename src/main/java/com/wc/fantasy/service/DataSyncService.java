@@ -526,7 +526,7 @@ public class DataSyncService {
         if (slug.contains("round-of-16") || slug.contains("round of 16")) return "R16";
         if (slug.contains("quarterfinal")) return "QF";
         if (slug.contains("semifinal"))    return "SF";
-        if (slug.contains("third"))        return "SF";
+        if (slug.contains("third") || slug.contains("3rd-place")) return "LF";
         if (slug.contains("final"))        return "FINAL";
         // 2. ESPN notes headline
         if (note.contains("group"))        return "GROUP";
@@ -534,7 +534,7 @@ public class DataSyncService {
         if (note.contains("round of 16") || note.contains("r16")) return "R16";
         if (note.contains("quarterfinal") || note.contains("quarter-final")) return "QF";
         if (note.contains("semifinal")    || note.contains("semi-final"))    return "SF";
-        if (note.contains("third") || note.contains("3rd")) return "SF";
+        if (note.contains("third") || note.contains("3rd")) return "LF";
         if (note.contains("final")) return "FINAL";
         // 3. Date-range fallback (last resort)
         LocalDate d = time.toLocalDate();
