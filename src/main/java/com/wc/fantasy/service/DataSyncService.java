@@ -201,18 +201,34 @@ public class DataSyncService {
         ObjectMapper mapper = new ObjectMapper();
         ZoneId ist = ZoneId.of("Asia/Kolkata");
 
-        // Truncate matches and all dependent tables, then re-insert fresh from ESPN
-        userTeamMatchPointsRepo.deleteAll();
-        matchStatsRepo.deleteAll();
-        userSquadRepo.deleteAll();
-        matchRepo.deleteAll();
-        log.info("Truncated matches table before fresh ESPN sync");
-
         // Build team lookup by normalised name
         Map<String, Team> nameToTeam = new HashMap<>();
         teamRepo.findAll().forEach(t -> nameToTeam.put(normalizeTeamName(t.getName()), t));
 
-        int inserted = 0, dateErrors = 0;
+        // Collect match IDs referenced in dependent tables — these must be updated in-place, not deleted
+        Set<Long> referencedIds = new HashSet<>();
+        userTeamMatchPointsRepo.findAll().forEach(p -> { if (p.getMatch() != null) referencedIds.add(p.getMatch().getId()); });
+        matchStatsRepo.findAll().forEach(s -> { if (s.getMatch() != null) referencedIds.add(s.getMatch().getId()); });
+        userSquadRepo.findAll().forEach(s -> { if (s.getMatch() != null) referencedIds.add(s.getMatch().getId()); });
+
+        // Delete only unreferenced matches so referenced ones can be updated in-place
+        List<Long> unreferencedIds = matchRepo.findAll().stream()
+                .map(Match::getId).filter(id -> !referencedIds.contains(id)).toList();
+        if (!unreferencedIds.isEmpty()) matchRepo.deleteAllById(unreferencedIds);
+        log.info("Deleted {} unreferenced matches, keeping {} referenced", unreferencedIds.size(), referencedIds.size());
+
+        // Index remaining (referenced) matches by ESPN stamp and by matchTime for dedup
+        Map<String, Match> existingByEspnId = new HashMap<>();
+        Map<LocalDateTime, Match> existingByTime = new HashMap<>();
+        matchRepo.findAll().forEach(ex -> {
+            if (ex.getVenue() != null) {
+                java.util.regex.Matcher vm = java.util.regex.Pattern.compile("\\[#espn(\\w+)\\]").matcher(ex.getVenue());
+                if (vm.find()) existingByEspnId.put(vm.group(1), ex);
+            }
+            if (ex.getMatchTime() != null) existingByTime.putIfAbsent(ex.getMatchTime(), ex);
+        });
+
+        int inserted = 0, updated = 0, dateErrors = 0;
 
         for (String date : ALL_MATCH_DATES) {
             try {
@@ -267,20 +283,40 @@ public class DataSyncService {
                         }
                     }
 
-                    Match match = new Match();
-                    match.setTeamA(teamA);
-                    match.setTeamB(teamB);
-                    match.setMatchTime(matchTime);
-                    match.setVenue(venue + " [#espn" + espnId + "]");
-                    match.setStage(stage);
-                    match.setStatus(status);
-                    if (scoreA != null) match.setScoreA(scoreA);
-                    if (scoreB != null) match.setScoreB(scoreB);
-                    if (teamA == null) match.setTeamALabel(homeTeamName);
-                    if (teamB == null) match.setTeamBLabel(awayTeamName);
-                    matchRepo.save(match);
-                    log.info("Inserted {} match: {} vs {} at {}", stage, homeTeamName, awayTeamName, matchTime);
-                    inserted++;
+                    // Check if this ESPN event matches an existing referenced row
+                    Match existing = existingByEspnId.get(espnId);
+                    if (existing == null) existing = existingByTime.get(matchTime);
+
+                    if (existing != null) {
+                        // Update in-place — preserve FK references
+                        existing.setTeamA(teamA);
+                        existing.setTeamB(teamB);
+                        existing.setMatchTime(matchTime);
+                        existing.setVenue(venue + " [#espn" + espnId + "]");
+                        existing.setStage(stage);
+                        if (!"COMPLETED".equals(existing.getStatus())) existing.setStatus(status);
+                        if (scoreA != null) existing.setScoreA(scoreA);
+                        if (scoreB != null) existing.setScoreB(scoreB);
+                        existing.setTeamALabel(teamA == null ? homeTeamName : null);
+                        existing.setTeamBLabel(teamB == null ? awayTeamName : null);
+                        matchRepo.save(existing);
+                        updated++;
+                    } else {
+                        Match match = new Match();
+                        match.setTeamA(teamA);
+                        match.setTeamB(teamB);
+                        match.setMatchTime(matchTime);
+                        match.setVenue(venue + " [#espn" + espnId + "]");
+                        match.setStage(stage);
+                        match.setStatus(status);
+                        if (scoreA != null) match.setScoreA(scoreA);
+                        if (scoreB != null) match.setScoreB(scoreB);
+                        if (teamA == null) match.setTeamALabel(homeTeamName);
+                        if (teamB == null) match.setTeamBLabel(awayTeamName);
+                        matchRepo.save(match);
+                        log.info("Inserted {} match: {} vs {} at {}", stage, homeTeamName, awayTeamName, matchTime);
+                        inserted++;
+                    }
                 }
             } catch (Exception e) {
                 log.error("Failed ESPN scoreboard for date {}: {}", date, e.getMessage());
@@ -288,7 +324,7 @@ public class DataSyncService {
             }
         }
 
-        log.info("syncMatches fresh from ESPN: {} inserted, {} dateErrors", inserted, dateErrors);
+        log.info("syncMatches from ESPN: {} inserted, {} updated, {} dateErrors", inserted, updated, dateErrors);
         refreshRoundStarts();
         return (int) matchRepo.count();
     }
