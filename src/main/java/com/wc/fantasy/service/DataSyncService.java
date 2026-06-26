@@ -264,7 +264,8 @@ public class DataSyncService {
     }
 
     public int syncPlayers() {
-        playerRepo.deleteAll();
+        // Never deleteAll — players are FK-referenced by user_team_starters/bench.
+        // Upsert: update existing player rows in-place, insert only truly new ones.
 
         // Get ESPN team IDs from teams page
         String html = webClient().get().uri(ESPN_TEAMS_URL).retrieve().bodyToMono(String.class).block();
@@ -277,7 +278,8 @@ public class DataSyncService {
         Map<String, Team> nameToTeam = new HashMap<>();
         teamRepo.findAll().forEach(t -> nameToTeam.put(t.getName().toLowerCase(), t));
 
-        int total = 0;
+        int inserted = 0;
+        int updated  = 0;
         for (Map.Entry<String, String> entry : espnTeams.entrySet()) {
             String espnId = entry.getKey();
             String espnName = entry.getValue();
@@ -285,30 +287,41 @@ public class DataSyncService {
             Team team = findTeamByEspnName(espnName, nameToTeam);
             if (team == null) continue;
 
+            // Load existing players for this team into a map keyed by name (lowercase)
+            Map<String, Player> existing = new HashMap<>();
+            playerRepo.findByTeamId(team.getId()).forEach(p -> existing.put(p.getName().toLowerCase(), p));
+
             List<String[]> players = fetchSquad(espnId);
             for (String[] p : players) {
-                String name = p[0];
-                String pos  = p[1];
+                String name      = p[0];
+                String pos       = p[1];
                 String jerseyStr = p.length > 2 ? p[2] : null;
-
-                // Skip duplicate name+team combos
-                boolean exists = playerRepo.findByTeamId(team.getId()).stream()
-                        .anyMatch(ex -> ex.getName().equalsIgnoreCase(name));
-                if (exists) continue;
-
-                Player player = new Player();
-                player.setName(name);
-                player.setPosition(pos);
-                player.setTeam(team);
-                player.setPrice(calcPrice(name, pos));
+                Integer jersey   = null;
                 if (jerseyStr != null) {
-                    try { player.setJerseyNumber(Integer.parseInt(jerseyStr)); } catch (NumberFormatException ignored) {}
+                    try { jersey = Integer.parseInt(jerseyStr); } catch (NumberFormatException ignored) {}
                 }
-                playerRepo.save(player);
-                total++;
+
+                Player player = existing.get(name.toLowerCase());
+                if (player != null) {
+                    // Update mutable fields in-place — preserves FK references
+                    boolean changed = false;
+                    if (!pos.equals(player.getPosition())) { player.setPosition(pos); changed = true; }
+                    if (jersey != null && !jersey.equals(player.getJerseyNumber())) { player.setJerseyNumber(jersey); changed = true; }
+                    if (changed) { playerRepo.save(player); updated++; }
+                } else {
+                    Player np = new Player();
+                    np.setName(name);
+                    np.setPosition(pos);
+                    np.setTeam(team);
+                    np.setPrice(calcPrice(name, pos));
+                    if (jersey != null) np.setJerseyNumber(jersey);
+                    playerRepo.save(np);
+                    inserted++;
+                }
             }
         }
-        log.info("Synced {} players from ESPN", total);
+        log.info("Synced players: {} inserted, {} updated", inserted, updated);
+        int total = inserted + updated;
 
         // Apply FIFA prices on top of the freshly synced players
         try {
