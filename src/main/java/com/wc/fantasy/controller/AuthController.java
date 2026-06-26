@@ -20,12 +20,10 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
         String username = body.get("username");
-        AppUser user = userRepo.findByUsername(username).orElseGet(() -> {
-            AppUser u = new AppUser();
-            u.setUsername(username);
-            u.setDisplayName(body.getOrDefault("displayName", username));
-            return userRepo.save(u);
-        });
+        AppUser user = userRepo.findByUsername(username).orElse(null);
+        if (user == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid username. Please contact the admin."));
+        }
         String token = jwtService.generateToken(username);
         return ResponseEntity.ok(Map.of(
                 "token", token,
