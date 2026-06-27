@@ -14,6 +14,6 @@ public class LeaderboardService {
     private final UserRepository userRepo;
 
     public List<AppUser> getOverallLeaderboard() {
-        return userRepo.findByIsAdminFalseOrIsAdminIsNullOrderByTotalPointsDesc();
+        return userRepo.findLeaderboardWithPoints();
     }
 }
