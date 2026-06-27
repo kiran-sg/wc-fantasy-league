@@ -168,6 +168,16 @@ public class AdminController {
         }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
     }
 
+    @PatchMapping("/teams/{id}/eliminated")
+    public ResponseEntity<Map<String, Object>> setTeamEliminated(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return teamRepo.findById(id).map(t -> {
+            t.setEliminated(Boolean.parseBoolean(body.getOrDefault("eliminated", "false").toString()));
+            teamRepo.save(t);
+            return ResponseEntity.ok(Map.<String, Object>of(
+                    "id", t.getId(), "name", t.getName(), "eliminated", t.getEliminated()));
+        }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
+    }
+
     @PatchMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(@PathVariable Long id, @RequestBody Map<String, String> body) {
         com.wc.fantasy.model.AppUser user = userRepo.findById(id).orElse(null);

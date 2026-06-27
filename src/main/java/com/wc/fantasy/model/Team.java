@@ -15,4 +15,6 @@ public class Team {
     @Column(name = "team_group")
     private String group;
     private String flagUrl;
+    @Column(name = "eliminated", columnDefinition = "boolean default false")
+    private Boolean eliminated = false;
 }
