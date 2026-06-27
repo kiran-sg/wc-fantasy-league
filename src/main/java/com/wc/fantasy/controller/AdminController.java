@@ -85,6 +85,30 @@ public class AdminController {
         };
     }
 
+    @DeleteMapping("/players/{id}")
+    public ResponseEntity<Map<String, Object>> deletePlayer(@PathVariable Long id) {
+        com.wc.fantasy.model.Player player = playerRepo.findById(id).orElse(null);
+        if (player == null) return ResponseEntity.notFound().build();
+
+        // Check usage in user teams (starters/bench/captain/vc)
+        boolean inTeam = teamRepo.findAll().stream().anyMatch(t ->
+            (t.getStarters() != null && t.getStarters().stream().anyMatch(p -> p.getId().equals(id))) ||
+            (t.getBench()    != null && t.getBench().stream().anyMatch(p -> p.getId().equals(id))) ||
+            (t.getCaptain()  != null && t.getCaptain().getId().equals(id)) ||
+            (t.getViceCaptain() != null && t.getViceCaptain().getId().equals(id))
+        );
+        if (inTeam) return ResponseEntity.badRequest()
+                .body(Map.of("error", "Player is in one or more user teams and cannot be deleted."));
+
+        // Check usage in match stats
+        boolean inStats = statsRepo.findAll().stream().anyMatch(s -> s.getPlayer() != null && s.getPlayer().getId().equals(id));
+        if (inStats) return ResponseEntity.badRequest()
+                .body(Map.of("error", "Player has match stats recorded and cannot be deleted."));
+
+        playerRepo.delete(player);
+        return ResponseEntity.ok(Map.of("deleted", id));
+    }
+
     @PatchMapping("/players/{id}/price")
     public ResponseEntity<Map<String, Object>> updatePlayerPrice(
             @PathVariable Long id,
