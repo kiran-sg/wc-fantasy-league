@@ -32,7 +32,8 @@ public class AdminController {
     private final FifaScraperService fifaScraperService;
     private final com.wc.fantasy.repository.UserRepository userRepo;
     private final com.wc.fantasy.repository.PlayerRepository playerRepo;
-    private final com.wc.fantasy.repository.UserTeamRepository teamRepo;
+    private final com.wc.fantasy.repository.TeamRepository teamRepo;
+    private final com.wc.fantasy.repository.UserTeamRepository userTeamRepo;
     private final com.wc.fantasy.repository.UserTeamMatchPointsRepository matchPointsRepo;
     private final com.wc.fantasy.repository.UserTransferRecordRepository transferRecordRepo;
 
@@ -85,13 +86,41 @@ public class AdminController {
         };
     }
 
+    @PostMapping("/players")
+    public ResponseEntity<Map<String, Object>> createPlayer(@RequestBody Map<String, Object> body) {
+        String name = (String) body.get("name");
+        if (name == null || name.isBlank())
+            return ResponseEntity.badRequest().body(Map.of("error", "Name is required"));
+        String position = (String) body.get("position");
+        if (position == null || !List.of("GK","DEF","MID","FWD").contains(position))
+            return ResponseEntity.badRequest().body(Map.of("error", "Valid position required (GK/DEF/MID/FWD)"));
+        Object teamIdObj = body.get("teamId");
+        if (teamIdObj == null)
+            return ResponseEntity.badRequest().body(Map.of("error", "teamId is required"));
+        Long teamId = Long.valueOf(teamIdObj.toString());
+        com.wc.fantasy.model.Team team = teamRepo.findById(teamId).orElse(null);
+        if (team == null)
+            return ResponseEntity.badRequest().body(Map.of("error", "Team not found"));
+        Object priceObj = body.get("price");
+        long price = priceObj != null ? Long.valueOf(priceObj.toString()) : 6_000_000L;
+
+        com.wc.fantasy.model.Player player = new com.wc.fantasy.model.Player();
+        player.setName(name.trim());
+        player.setPosition(position);
+        player.setTeam(team);
+        player.setPrice(java.math.BigDecimal.valueOf(price));
+        playerRepo.save(player);
+        return ResponseEntity.ok(Map.of("id", player.getId(), "name", player.getName(),
+                "position", player.getPosition(), "team", team.getName(), "price", price));
+    }
+
     @DeleteMapping("/players/{id}")
     public ResponseEntity<Map<String, Object>> deletePlayer(@PathVariable Long id) {
         com.wc.fantasy.model.Player player = playerRepo.findById(id).orElse(null);
         if (player == null) return ResponseEntity.notFound().build();
 
         // Check usage in user teams (starters/bench/captain/vc)
-        boolean inTeam = teamRepo.findAll().stream().anyMatch(t ->
+        boolean inTeam = userTeamRepo.findAll().stream().anyMatch(t ->
             (t.getStarters() != null && t.getStarters().stream().anyMatch(p -> p.getId().equals(id))) ||
             (t.getBench()    != null && t.getBench().stream().anyMatch(p -> p.getId().equals(id))) ||
             (t.getCaptain()  != null && t.getCaptain().getId().equals(id)) ||
@@ -122,6 +151,23 @@ public class AdminController {
         }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
     }
 
+    @PatchMapping("/players/{id}")
+    public ResponseEntity<Map<String, Object>> updatePlayer(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return playerRepo.findById(id).map(p -> {
+            if (body.containsKey("position")) {
+                String pos = (String) body.get("position");
+                if (List.of("GK", "DEF", "MID", "FWD").contains(pos)) p.setPosition(pos);
+            }
+            if (body.containsKey("price")) {
+                p.setPrice(java.math.BigDecimal.valueOf(Long.valueOf(body.get("price").toString())));
+            }
+            playerRepo.save(p);
+            return ResponseEntity.ok(Map.<String, Object>of(
+                    "id", p.getId(), "name", p.getName(),
+                    "position", p.getPosition(), "price", p.getPrice().longValue()));
+        }).orElse(ResponseEntity.notFound().<Map<String, Object>>build());
+    }
+
     @PatchMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(@PathVariable Long id, @RequestBody Map<String, String> body) {
         com.wc.fantasy.model.AppUser user = userRepo.findById(id).orElse(null);
@@ -142,9 +188,9 @@ public class AdminController {
         // Delete transfer records
         transferRecordRepo.deleteAll(transferRecordRepo.findByUserId(id));
         // Delete match points + team
-        teamRepo.findByUserId(id).ifPresent(team -> {
+        userTeamRepo.findByUserId(id).ifPresent(team -> {
             matchPointsRepo.deleteAll(matchPointsRepo.findByUserTeamId(team.getId()));
-            teamRepo.delete(team);
+            userTeamRepo.delete(team);
         });
         userRepo.delete(user);
         return ResponseEntity.ok(Map.of("deleted", id));
