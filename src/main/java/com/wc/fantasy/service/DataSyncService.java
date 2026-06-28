@@ -292,7 +292,7 @@ public class DataSyncService {
                         existing.setTeamA(teamA);
                         existing.setTeamB(teamB);
                         existing.setMatchTime(matchTime);
-                        existing.setVenue(venue + " [#espn" + espnId + "]");
+                        existing.setVenue(venue);
                         existing.setStage(stage);
                         if (!"COMPLETED".equals(existing.getStatus())) existing.setStatus(status);
                         if (scoreA != null) existing.setScoreA(scoreA);
@@ -306,7 +306,7 @@ public class DataSyncService {
                         match.setTeamA(teamA);
                         match.setTeamB(teamB);
                         match.setMatchTime(matchTime);
-                        match.setVenue(venue + " [#espn" + espnId + "]");
+                        match.setVenue(venue);
                         match.setStage(stage);
                         match.setStatus(status);
                         if (scoreA != null) match.setScoreA(scoreA);
@@ -538,7 +538,7 @@ public class DataSyncService {
                     match.setTeamA(teamA);
                     match.setTeamB(teamB);
                     match.setMatchTime(espnTime);
-                    match.setVenue(venue + " [#espn" + espnId + "]");
+                    match.setVenue(venue);
                     match.setStage(stage);
                     match.setStatus("UPCOMING");
                     if (teamA == null) match.setTeamALabel(homeTeamName);
