@@ -368,8 +368,9 @@ public class AdminController {
 
         if (match.getMatchTime() != null) {
             java.time.LocalDateTime earliest = match.getMatchTime().plusMinutes(90);
-            if (java.time.LocalDateTime.now().isBefore(earliest)) {
-                long minsLeft = java.time.Duration.between(java.time.LocalDateTime.now(), earliest).toMinutes() + 1;
+            java.time.LocalDateTime nowIst = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+            if (nowIst.isBefore(earliest)) {
+                long minsLeft = java.time.Duration.between(nowIst, earliest).toMinutes() + 1;
                 return ResponseEntity.ok(Map.of("status", "error",
                         "message", "Too early — fetch available in " + minsLeft + " min (1.5 hrs after kick-off)."));
             }
@@ -487,8 +488,9 @@ public class AdminController {
 
         if (match.getMatchTime() != null) {
             java.time.LocalDateTime earliest = match.getMatchTime().plusMinutes(90);
-            if (java.time.LocalDateTime.now().isBefore(earliest)) {
-                long minsLeft = java.time.Duration.between(java.time.LocalDateTime.now(), earliest).toMinutes() + 1;
+            java.time.LocalDateTime nowIst = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+            if (nowIst.isBefore(earliest)) {
+                long minsLeft = java.time.Duration.between(nowIst, earliest).toMinutes() + 1;
                 return Map.of("status", "error",
                         "message", "Too early — fetch available in " + minsLeft + " min (1.5 hrs after kick-off).");
             }

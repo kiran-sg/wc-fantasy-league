@@ -52,7 +52,7 @@ public class SquadService {
                                List<Long> benchIds) {    // up to 4 bench players in priority order
 
         Match match = matchRepo.findById(matchId).orElseThrow();
-        if (match.getMatchTime().isBefore(LocalDateTime.now())) {
+        if (match.getMatchTime().isBefore(LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")))) {
             throw new IllegalStateException("Match already started, cannot modify squad");
         }
 

@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 @Slf4j
@@ -20,7 +21,8 @@ public class MatchStatusScheduler {
     // Runs every 60 seconds
     @Scheduled(fixedDelay = 60_000)
     public void updateMatchStatuses() {
-        LocalDateTime now = LocalDateTime.now();
+        // matchTime is stored as IST — compare in IST so Railway (UTC) doesn't lag by 5h30m
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
         List<Match> matches = matchRepo.findAll();
 
         for (Match match : matches) {
