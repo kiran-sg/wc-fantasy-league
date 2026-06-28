@@ -261,6 +261,102 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("created", created, "skipped", skipped, "errors", errors));
     }
 
+    @PostMapping("/players/price-upload")
+    public ResponseEntity<Map<String, Object>> uploadPlayerPrices(@RequestParam("file") MultipartFile file) {
+        if (file.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "File is empty"));
+
+        // Build team name → id lookup (case-insensitive)
+        Map<String, Long> teamLookup = new java.util.HashMap<>();
+        for (com.wc.fantasy.model.Team t : teamRepo.findAll()) {
+            teamLookup.put(t.getName().toLowerCase().trim(), t.getId());
+        }
+
+        int updated = 0, skipped = 0, notFound = 0;
+        List<String> errors = new ArrayList<>();
+
+        try (Workbook wb = new XSSFWorkbook(file.getInputStream())) {
+            Sheet sheet = wb.getSheetAt(0);
+            Row header = sheet.getRow(0);
+
+            int colName = -1, colCountry = -1, colPrice = -1, colPriceOverride = -1;
+            for (Cell c : header) {
+                String h = cellStr(c);
+                if (h == null) continue;
+                String hl = h.trim();
+                if (hl.equals("App Player Name"))             colName          = c.getColumnIndex();
+                else if (hl.equals("App Country"))            colCountry       = c.getColumnIndex();
+                else if (hl.equals("Price FIFA ($m)"))        colPrice         = c.getColumnIndex();
+                else if (hl.equals("Price to update in App")) colPriceOverride = c.getColumnIndex();
+            }
+
+            if (colName == -1 || colCountry == -1 || colPrice == -1)
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Required columns not found: 'App Player Name', 'App Country', 'Price FIFA ($m)'"));
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+
+                String playerName = cellStr(row.getCell(colName));
+                String country    = cellStr(row.getCell(colCountry));
+                if (playerName == null || playerName.isBlank()) { skipped++; continue; }
+
+                // Determine which price to use: override column takes priority if set
+                String overrideRaw = colPriceOverride >= 0 ? cellStr(row.getCell(colPriceOverride)) : null;
+                boolean useOverride = overrideRaw != null
+                    && !overrideRaw.isBlank()
+                    && !overrideRaw.equalsIgnoreCase("No change")
+                    && !overrideRaw.equalsIgnoreCase("No FIFA match");
+
+                java.math.BigDecimal price;
+                try {
+                    String priceRaw = useOverride ? overrideRaw : cellStr(row.getCell(colPrice));
+                    if (priceRaw == null || priceRaw.isBlank()) { skipped++; continue; }
+                    double priceMillions = Double.parseDouble(priceRaw.replaceAll("[^0-9.]", ""));
+                    price = java.math.BigDecimal.valueOf(priceMillions * 1_000_000)
+                            .setScale(1, java.math.RoundingMode.HALF_UP);
+                } catch (NumberFormatException e) {
+                    errors.add("Row " + (i + 1) + " (" + playerName + "): invalid price value — skipped");
+                    skipped++;
+                    continue;
+                }
+
+                // Resolve team
+                Long teamId = country != null ? teamLookup.get(country.toLowerCase().trim()) : null;
+
+                // Find player: match by name + team if team found, else name-only
+                List<com.wc.fantasy.model.Player> candidates;
+                if (teamId != null) {
+                    candidates = playerRepo.findByTeamId(teamId).stream()
+                        .filter(p -> p.getName().equalsIgnoreCase(playerName))
+                        .toList();
+                } else {
+                    candidates = playerRepo.findAll().stream()
+                        .filter(p -> p.getName().equalsIgnoreCase(playerName))
+                        .toList();
+                }
+
+                if (candidates.isEmpty()) {
+                    errors.add("Row " + (i + 1) + ": player '" + playerName + "'" +
+                        (country != null ? " (" + country + ")" : "") + " not found — skipped");
+                    notFound++;
+                    continue;
+                }
+
+                for (com.wc.fantasy.model.Player p : candidates) {
+                    p.setPrice(price);
+                    playerRepo.save(p);
+                    updated++;
+                }
+            }
+        } catch (Exception e) {
+            log.error("Price upload failed", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to parse file: " + e.getMessage()));
+        }
+
+        return ResponseEntity.ok(Map.of("updated", updated, "skipped", skipped, "notFound", notFound, "errors", errors));
+    }
+
     @PostMapping("/update-scores/{matchId}")
     public Map<String, Object> updateScores(@PathVariable Long matchId) {
         Match match = matchRepo.findById(matchId)
