@@ -338,4 +338,82 @@ public class AdminController {
         return matchRepo.findAll(org.springframework.data.domain.Sort.by("matchTime"));
     }
 
+    // ── Squad position-mismatch audit ─────────────────────────────────────────
+
+    /**
+     * Returns every player placed in a slot whose position differs from their
+     * actual position (e.g. a FWD sitting in a DEF slot).
+     *
+     * Slot positions are inferred from the team's formation:
+     *   slot 0        → GK
+     *   slots 1..defCount → DEF
+     *   slots ..midCount  → MID
+     *   slots ..fwdCount  → FWD
+     * The same logic applies to the 4-player bench (GK, DEF, MID, FWD order).
+     *
+     * Response: list of { userId, username, displayName, teamId, slot, slotPosition, player, playerPosition }
+     */
+    @GetMapping("/squad-audit")
+    public List<Map<String, Object>> auditSquadPositions() {
+        List<UserTeam> allTeams = userTeamRepo.findAll();
+        List<Map<String, Object>> mismatches = new ArrayList<>();
+
+        for (UserTeam team : allTeams) {
+            String formation = team.getFormation() != null ? team.getFormation() : "4-4-2";
+            int[] parts = parseFormation(formation); // [def, mid, fwd]
+
+            List<String> starterSlots = buildSlotPositions(parts);   // 11 entries
+            List<String> benchSlots   = List.of("GK", "DEF", "MID", "FWD"); // always fixed
+
+            checkSlots(team, team.getStarters(), starterSlots, "STARTER", mismatches);
+            checkSlots(team, team.getBench(),    benchSlots,   "BENCH",   mismatches);
+        }
+
+        return mismatches;
+    }
+
+    private int[] parseFormation(String formation) {
+        // formation like "4-4-2" → [4, 4, 2]
+        String[] parts = formation.split("-");
+        if (parts.length == 3) {
+            try {
+                return new int[]{ Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2]) };
+            } catch (NumberFormatException ignored) {}
+        }
+        return new int[]{ 4, 4, 2 }; // fallback
+    }
+
+    private List<String> buildSlotPositions(int[] parts) {
+        List<String> slots = new ArrayList<>();
+        slots.add("GK");
+        for (int i = 0; i < parts[0]; i++) slots.add("DEF");
+        for (int i = 0; i < parts[1]; i++) slots.add("MID");
+        for (int i = 0; i < parts[2]; i++) slots.add("FWD");
+        return slots;
+    }
+
+    private void checkSlots(UserTeam team, List<Player> players, List<String> slotPositions,
+                            String section, List<Map<String, Object>> out) {
+        for (int i = 0; i < players.size() && i < slotPositions.size(); i++) {
+            Player p = players.get(i);
+            String slotPos   = slotPositions.get(i);
+            String playerPos = p.getPosition();
+            if (!slotPos.equalsIgnoreCase(playerPos)) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("userId",         team.getUser().getId());
+                row.put("username",       team.getUser().getUsername());
+                row.put("displayName",    team.getUser().getDisplayName());
+                row.put("teamId",         team.getId());
+                row.put("formation",      team.getFormation());
+                row.put("section",        section);
+                row.put("slotIndex",      i);
+                row.put("slotPosition",   slotPos);
+                row.put("playerId",       p.getId());
+                row.put("playerName",     p.getName());
+                row.put("playerPosition", playerPos);
+                out.add(row);
+            }
+        }
+    }
+
 }
