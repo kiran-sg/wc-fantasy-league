@@ -1,6 +1,8 @@
 package com.wc.fantasy.controller;
 
 import com.wc.fantasy.model.Match;
+import com.wc.fantasy.model.MatchPlayerStats;
+import com.wc.fantasy.repository.MatchPlayerStatsRepository;
 import com.wc.fantasy.repository.MatchRepository;
 import com.wc.fantasy.service.MatchSyncService;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +19,7 @@ public class MatchController {
 
     private final MatchRepository matchRepo;
     private final MatchSyncService matchSyncService;
+    private final MatchPlayerStatsRepository statsRepo;
 
     @GetMapping
     public List<Match> getAll() {
@@ -31,6 +34,11 @@ public class MatchController {
     @GetMapping("/{id}")
     public Match getById(@PathVariable Long id) {
         return matchRepo.findById(id).orElseThrow();
+    }
+
+    @GetMapping("/{id}/stats")
+    public List<MatchPlayerStats> getStats(@PathVariable Long id) {
+        return statsRepo.findByMatchId(id);
     }
 
     @PostMapping("/sync")

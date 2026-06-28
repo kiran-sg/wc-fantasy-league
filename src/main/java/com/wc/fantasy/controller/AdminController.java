@@ -360,12 +360,131 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("updated", updated, "skipped", skipped, "notFound", notFound, "errors", errors));
     }
 
+    /** Preview only — scrapes ESPN and returns stats in memory, nothing written to DB. */
+    @PostMapping("/preview-scores/{matchId}")
+    public ResponseEntity<Map<String, Object>> previewScores(@PathVariable Long matchId) {
+        Match match = matchRepo.findById(matchId)
+                .orElseThrow(() -> new IllegalArgumentException("Match not found"));
+
+        if (match.getMatchTime() != null) {
+            java.time.LocalDateTime earliest = match.getMatchTime().plusMinutes(90);
+            if (java.time.LocalDateTime.now().isBefore(earliest)) {
+                long minsLeft = java.time.Duration.between(java.time.LocalDateTime.now(), earliest).toMinutes() + 1;
+                return ResponseEntity.ok(Map.of("status", "error",
+                        "message", "Too early — fetch available in " + minsLeft + " min (1.5 hrs after kick-off)."));
+            }
+        }
+
+        List<MatchPlayerStats> stats = scraperService.fetchAndBuildStats(match);
+        if (stats.isEmpty()) {
+            return ResponseEntity.ok(Map.of("status", "error",
+                    "message", "Could not fetch match data from ESPN. Match may not be finished yet."));
+        }
+
+        EspnScraperService.ScoreResult score = scraperService.fetchScore(match);
+        int scoreA = score != null ? score.homeScore() : (match.getScoreA() != null ? match.getScoreA() : 0);
+        int scoreB = score != null ? score.awayScore() : (match.getScoreB() != null ? match.getScoreB() : 0);
+
+        // Serialise stats as plain maps so the frontend can edit them
+        List<Map<String, Object>> statList = stats.stream().map(s -> {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("playerId",      s.getPlayer().getId());
+            m.put("playerName",    s.getPlayer().getName());
+            m.put("position",      s.getPlayer().getPosition());
+            m.put("teamName",      s.getPlayer().getTeam() != null ? s.getPlayer().getTeam().getName() : "");
+            m.put("minutesPlayed", s.getMinutesPlayed());
+            m.put("goals",         s.getGoals());
+            m.put("assists",       s.getAssists());
+            m.put("yellowCards",   s.getYellowCards());
+            m.put("redCards",      s.getRedCards());
+            m.put("ownGoals",      s.getOwnGoals());
+            m.put("cleanSheet",    s.getCleanSheet());
+            m.put("goalsConceded", s.getGoalsConceded());
+            m.put("saves",         s.getSaves());
+            m.put("shotsOnTarget", s.getShotsOnTarget());
+            return m;
+        }).toList();
+
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "scoreA", scoreA,
+                "scoreB", scoreB,
+                "stats",  statList
+        ));
+    }
+
+    /** Save previously-previewed (and optionally edited) stats, then calculate points. */
+    @PostMapping("/save-scores/{matchId}")
+    public ResponseEntity<Map<String, Object>> saveScores(
+            @PathVariable Long matchId,
+            @RequestBody Map<String, Object> body) {
+
+        Match match = matchRepo.findById(matchId)
+                .orElseThrow(() -> new IllegalArgumentException("Match not found"));
+
+        int scoreA = body.containsKey("scoreA") ? ((Number) body.get("scoreA")).intValue() : 0;
+        int scoreB = body.containsKey("scoreB") ? ((Number) body.get("scoreB")).intValue() : 0;
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> statList = (List<Map<String, Object>>) body.get("stats");
+        if (statList == null || statList.isEmpty())
+            return ResponseEntity.badRequest().body(Map.of("error", "No stats provided"));
+
+        List<MatchPlayerStats> statsToSave = new ArrayList<>();
+        for (Map<String, Object> row : statList) {
+            Long playerId = ((Number) row.get("playerId")).longValue();
+            com.wc.fantasy.model.Player player = playerRepo.findById(playerId).orElse(null);
+            if (player == null) continue;
+
+            MatchPlayerStats s = new MatchPlayerStats();
+            s.setMatch(match);
+            s.setPlayer(player);
+            s.setMinutesPlayed(intVal(row, "minutesPlayed"));
+            s.setGoals(intVal(row, "goals"));
+            s.setAssists(intVal(row, "assists"));
+            s.setYellowCards(intVal(row, "yellowCards"));
+            s.setRedCards(intVal(row, "redCards"));
+            s.setOwnGoals(intVal(row, "ownGoals"));
+            s.setCleanSheet(Boolean.TRUE.equals(row.get("cleanSheet")));
+            s.setGoalsConceded(intVal(row, "goalsConceded"));
+            s.setSaves(intVal(row, "saves"));
+            s.setShotsOnTarget(intVal(row, "shotsOnTarget"));
+            s.setTotalPoints(0);
+            statsToSave.add(s);
+        }
+
+        match.setScoreA(scoreA);
+        match.setScoreB(scoreB);
+        match.setStatus("COMPLETED");
+        matchRepo.save(match);
+
+        statsRepo.deleteAll(statsRepo.findByMatchId(matchId));
+        statsRepo.saveAll(statsToSave);
+
+        squadService.calculatePoints(matchId);
+        userTeamService.calculatePointsForMatch(matchId, match);
+
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "matchId", matchId,
+                "scoreA", scoreA,
+                "scoreB", scoreB,
+                "statsCount", statsToSave.size()
+        ));
+    }
+
+    private int intVal(Map<String, Object> row, String key) {
+        Object v = row.get(key);
+        if (v == null) return 0;
+        return ((Number) v).intValue();
+    }
+
+    /** Legacy endpoint — kept for backward compat, now delegates to preview+save in one shot. */
     @PostMapping("/update-scores/{matchId}")
     public Map<String, Object> updateScores(@PathVariable Long matchId) {
         Match match = matchRepo.findById(matchId)
                 .orElseThrow(() -> new IllegalArgumentException("Match not found"));
 
-        // Block fetch until at least 1.5 hours after kick-off
         if (match.getMatchTime() != null) {
             java.time.LocalDateTime earliest = match.getMatchTime().plusMinutes(90);
             if (java.time.LocalDateTime.now().isBefore(earliest)) {
@@ -380,7 +499,6 @@ public class AdminController {
             return Map.of("status", "error", "message", "Could not fetch match data from ESPN. Match may not be finished yet.");
         }
 
-        // Update match score from ESPN
         EspnScraperService.ScoreResult score = scraperService.fetchScore(match);
         if (score != null) {
             match.setScoreA(score.homeScore());
@@ -392,10 +510,7 @@ public class AdminController {
         statsRepo.deleteAll(statsRepo.findByMatchId(matchId));
         statsRepo.saveAll(stats);
 
-        // Calculate points for old per-match squads (UserSquad model, kept for backwards compat)
         squadService.calculatePoints(matchId);
-
-        // Calculate points for persistent user teams (new model)
         userTeamService.calculatePointsForMatch(matchId, match);
 
         return Map.of(

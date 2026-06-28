@@ -221,7 +221,7 @@ public class EspnScraperService {
             if (!typeText.contains("goal")) continue;
 
             int minute = parseClock(play.path("clock").path("displayValue").asText(""));
-            if (minute < 0) continue;
+            if (minute < 0 || minute > 120) continue;
 
             String scoringTeamId = play.path("team").path("id").asText(null);
             if (scoringTeamId == null) continue;
@@ -256,11 +256,10 @@ public class EspnScraperService {
 
         int subMinute = -1;
         for (JsonNode play : entry.path("plays")) {
-            if (play.path("substitution").asBoolean(false)) {
-                String clock = play.path("clock").path("displayValue").asText("");
-                subMinute = parseClock(clock);
-                break;
-            }
+            if (!play.path("substitution").asBoolean(false)) continue;
+            String clock = play.path("clock").path("displayValue").asText("");
+            subMinute = parseClock(clock);
+            break;
         }
 
         if (starter && subbedOut && subMinute > 0) return new int[]{0, subMinute};
