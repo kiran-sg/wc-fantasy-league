@@ -81,7 +81,10 @@ public class AdminController {
         if (cell == null) return null;
         return switch (cell.getCellType()) {
             case STRING  -> cell.getStringCellValue().trim();
-            case NUMERIC -> String.valueOf((long) cell.getNumericCellValue());
+            case NUMERIC -> {
+                double v = cell.getNumericCellValue();
+                yield (v == Math.floor(v)) ? String.valueOf((long) v) : String.valueOf(v);
+            }
             default      -> null;
         };
     }
