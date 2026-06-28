@@ -72,6 +72,7 @@ public class DataSeeder implements CommandLineRunner {
 
     private void seedRoundConfig() {
         // Upsert — only insert rows that don't already exist, so manual edits are preserved
+        seedConfigIfAbsent("GROUP", 999, 3, 12, 23, "Asia/Kolkata");
         seedConfigIfAbsent("R32",   4,  3, 12, 19, "Asia/Kolkata");
         seedConfigIfAbsent("R16",   4,  4, 12, 19, "Asia/Kolkata");
         seedConfigIfAbsent("QF",    4,  5, 12, 19, "Asia/Kolkata");
