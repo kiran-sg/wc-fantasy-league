@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface MatchRepository extends JpaRepository<Match, Long> {
     List<Match> findByStatusOrderByMatchTimeAsc(String status);
+    List<Match> findAllByOrderByMatchTimeAsc();
 }

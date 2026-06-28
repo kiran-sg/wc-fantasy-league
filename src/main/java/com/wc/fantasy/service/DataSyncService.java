@@ -325,8 +325,25 @@ public class DataSyncService {
         }
 
         log.info("syncMatches from ESPN: {} inserted, {} updated, {} dateErrors", inserted, updated, dateErrors);
+        assignMatchNumbers();
         refreshRoundStarts();
         return (int) matchRepo.count();
+    }
+
+    private void assignMatchNumbers() {
+        List<String> knockoutStages = List.of("R32", "R16", "QF", "SF", "LF", "FINAL");
+        for (String stage : knockoutStages) {
+            List<Match> stageMatches = matchRepo.findAll().stream()
+                .filter(m -> stage.equals(m.getStage()) && m.getMatchTime() != null)
+                .sorted(Comparator.comparing(Match::getMatchTime))
+                .toList();
+            for (int i = 0; i < stageMatches.size(); i++) {
+                Match m = stageMatches.get(i);
+                m.setMatchNumber(i + 1);
+                matchRepo.save(m);
+            }
+        }
+        log.info("assignMatchNumbers: done");
     }
 
     public int syncPlayers() {
@@ -552,6 +569,7 @@ public class DataSyncService {
                 skipped++;
             }
         }
+        assignMatchNumbers();
         return Map.of("deleted", knockoutIds.size(), "inserted", inserted, "dateErrors", skipped);
     }
 

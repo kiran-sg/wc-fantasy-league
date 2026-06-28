@@ -20,7 +20,7 @@ public class MatchController {
 
     @GetMapping
     public List<Match> getAll() {
-        return matchRepo.findAll();
+        return matchRepo.findAllByOrderByMatchTimeAsc();
     }
 
     @GetMapping("/status/{status}")

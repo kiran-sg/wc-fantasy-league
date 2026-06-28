@@ -25,4 +25,5 @@ public class Match {
     private Integer scoreB;
     private String teamALabel; // TBD placeholder e.g. "Winner Group A"
     private String teamBLabel;
+    private Integer matchNumber; // sequential within stage, ordered by matchTime
 }
