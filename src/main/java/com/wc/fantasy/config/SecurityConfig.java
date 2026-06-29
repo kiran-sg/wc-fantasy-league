@@ -73,6 +73,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/matches/**", "/api/teams/**", "/api/players/**", "/api/leaderboard/**", "/api/round-config/**").permitAll()
                         .requestMatchers(HttpMethod.PUT, "/api/round-config/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/round-config/**").permitAll()
+                        .requestMatchers("/api/db/**").hasRole("SUPERADMIN")
                         .requestMatchers("/api/team/**").authenticated()
                         .anyRequest().authenticated()
                 )
