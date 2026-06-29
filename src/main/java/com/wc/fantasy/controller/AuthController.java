@@ -21,6 +21,9 @@ public class AuthController {
     @Value("${superadmin.password}")
     private String superadminPassword;
 
+    @Value("${admin.password}")
+    private String adminPassword;
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
         String username = body.get("username");
@@ -28,9 +31,15 @@ public class AuthController {
         if (user == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid username. Please contact the admin."));
         }
-        if ("superadmin".equals(username)) {
+        boolean isAdmin = Boolean.TRUE.equals(user.getIsAdmin());
+        if (isAdmin) {
             String password = body.get("password");
-            if (password == null || !superadminPassword.equals(password)) {
+            // No password supplied yet — tell the client to show the password field
+            if (password == null || password.isBlank()) {
+                return ResponseEntity.status(200).body(Map.of("requiresPassword", true));
+            }
+            String expected = "superadmin".equals(username) ? superadminPassword : adminPassword;
+            if (!expected.equals(password)) {
                 return ResponseEntity.status(401).body(Map.of("error", "Invalid password."));
             }
         }
@@ -39,7 +48,7 @@ public class AuthController {
                 "token", token,
                 "userId", user.getId(),
                 "username", user.getUsername(),
-                "isAdmin", Boolean.TRUE.equals(user.getIsAdmin())
+                "isAdmin", true
         ));
     }
 }

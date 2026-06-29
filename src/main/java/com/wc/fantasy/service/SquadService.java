@@ -225,7 +225,7 @@ public class SquadService {
     // ── Points formula (knockout rules) ──────────────────────────────────────
 
     public int computePlayerPoints(MatchPlayerStats s) {
-        if (s.getMinutesPlayed() == 0) return 0; // DNP — no points, no penalties
+        if (s.getMinutesPlayed() == null || s.getMinutesPlayed() == 0) return 0; // DNP — no points, no penalties
 
         int pts = 0;
         String pos = s.getPlayer().getPosition();

@@ -179,6 +179,9 @@ public class UserTeamService {
             if (penalty > 0) {
                 user.setTotalPoints(Math.max(0, user.getTotalPoints() - penalty));
                 userRepo.save(user);
+                // Keep UserTeam.penaltyPoints in sync so calculatePoints re-deducts correctly
+                int currentTeamPenalty = old.getPenaltyPoints() != null ? old.getPenaltyPoints() : 0;
+                old.setPenaltyPoints(currentTeamPenalty + penalty);
             }
 
             old.setStarters(orderedList(starters, starterIds));
