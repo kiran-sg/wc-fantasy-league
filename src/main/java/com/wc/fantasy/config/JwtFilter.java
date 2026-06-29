@@ -32,9 +32,10 @@ public class JwtFilter extends OncePerRequestFilter {
             try {
                 if (jwtService.isValid(token)) {
                     String username = jwtService.extractUsername(token);
-                    Collection<GrantedAuthority> authorities = "superadmin".equals(username)
-                            ? List.of(new SimpleGrantedAuthority("ROLE_SUPERADMIN"))
-                            : List.of();
+                    List<GrantedAuthority> authorities = new java.util.ArrayList<>();
+                    if ("superadmin".equals(username)) {
+                        authorities.add(new SimpleGrantedAuthority("ROLE_SUPERADMIN"));
+                    }
                     var auth = new UsernamePasswordAuthenticationToken(username, null, authorities);
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 }
