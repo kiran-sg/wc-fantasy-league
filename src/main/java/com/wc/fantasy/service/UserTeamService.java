@@ -439,7 +439,15 @@ public class UserTeamService {
         return transferRecordRepo.findByUserId(userId);
     }
 
+    @Transactional
     public List<UserTeamSnapshot> getSnapshots(Long userId) {
+        // Backfill: if the user has a saved team but no snapshot for its stage, create one now
+        teamRepo.findByUserId(userId).ifPresent(team -> {
+            String stage = team.getStage();
+            if (stage != null && snapshotRepo.findByUserIdAndStage(userId, stage).isEmpty()) {
+                captureSnapshot(team.getUser(), team, stage);
+            }
+        });
         return snapshotRepo.findByUserIdOrderByStageAsc(userId);
     }
 
