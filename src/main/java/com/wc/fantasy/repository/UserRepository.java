@@ -10,6 +10,6 @@ public interface UserRepository extends JpaRepository<AppUser, Long> {
     Optional<AppUser> findByUsername(String username);
     List<AppUser> findByIsAdminFalseOrIsAdminIsNullOrderByTotalPointsDesc();
 
-    @Query("SELECT u FROM AppUser u WHERE u.totalPoints > 0 AND (u.isAdmin = false OR u.isAdmin IS NULL) ORDER BY u.totalPoints DESC")
+    @Query("SELECT u FROM AppUser u WHERE u.totalPoints > 0 AND (u.isAdmin = false OR u.isAdmin IS NULL) AND u.username <> 'user4' ORDER BY u.totalPoints DESC")
     List<AppUser> findLeaderboardWithPoints();
 }
