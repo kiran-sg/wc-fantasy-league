@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.ArrayList;
 
 import java.math.BigDecimal;
 import java.time.ZoneId;
@@ -26,6 +27,7 @@ public class UserTeamService {
     private final MatchPlayerStatsRepository statsRepo;
     private final UserTransferRecordRepository transferRecordRepo;
     private final RoundConfigRepository roundConfigRepo;
+    private final UserTeamSnapshotRepository snapshotRepo;
 
     private static final BigDecimal BUDGET = BigDecimal.valueOf(105_000_000);
     private static final int UNLIMITED = Integer.MAX_VALUE;
@@ -185,7 +187,9 @@ public class UserTeamService {
             old.setViceCaptain(viceCaptain);
             old.setStage(stage);
             if (formation != null && !formation.isBlank()) old.setFormation(formation);
-            return teamRepo.save(old);
+            UserTeam saved = teamRepo.save(old);
+            captureSnapshot(user, saved, stage);
+            return saved;
         }
 
         UserTeam team = new UserTeam();
@@ -196,7 +200,23 @@ public class UserTeamService {
         team.setBench(orderedList(bench, benchIds));
         team.setCaptain(captain);
         team.setViceCaptain(viceCaptain);
-        return teamRepo.save(team);
+        UserTeam saved = teamRepo.save(team);
+        captureSnapshot(user, saved, stage);
+        return saved;
+    }
+
+    private void captureSnapshot(AppUser user, UserTeam team, String stage) {
+        if (snapshotRepo.findByUserIdAndStage(user.getId(), stage).isPresent()) return;
+        UserTeamSnapshot snap = new UserTeamSnapshot();
+        snap.setUser(user);
+        snap.setStage(stage);
+        snap.setFormation(team.getFormation());
+        snap.setStarters(new ArrayList<>(team.getStarters()));
+        snap.setBench(new ArrayList<>(team.getBench()));
+        snap.setCaptain(team.getCaptain());
+        snap.setViceCaptain(team.getViceCaptain());
+        snapshotRepo.save(snap);
+        log.info("Snapshot captured: userId={} stage={}", user.getId(), stage);
     }
 
     // ── Calculate points for all teams after a match ──────────────────────────
@@ -417,6 +437,10 @@ public class UserTeamService {
 
     public List<UserTransferRecord> getAllTransferRecords(Long userId) {
         return transferRecordRepo.findByUserId(userId);
+    }
+
+    public List<UserTeamSnapshot> getSnapshots(Long userId) {
+        return snapshotRepo.findByUserIdOrderByStageAsc(userId);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

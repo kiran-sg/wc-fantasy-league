@@ -2,6 +2,7 @@ package com.wc.fantasy.controller;
 
 import com.wc.fantasy.model.UserTeam;
 import com.wc.fantasy.model.UserTeamMatchPoints;
+import com.wc.fantasy.model.UserTeamSnapshot;
 import com.wc.fantasy.model.UserTransferRecord;
 import com.wc.fantasy.service.UserTeamService;
 import lombok.RequiredArgsConstructor;
@@ -52,5 +53,10 @@ public class UserTeamController {
     @GetMapping("/transfers/all")
     public List<UserTransferRecord> getAllTransfers(@RequestParam Long userId) {
         return teamService.getAllTransferRecords(userId);
+    }
+
+    @GetMapping("/snapshots")
+    public List<UserTeamSnapshot> getSnapshots(@RequestParam Long userId) {
+        return teamService.getSnapshots(userId);
     }
 }
