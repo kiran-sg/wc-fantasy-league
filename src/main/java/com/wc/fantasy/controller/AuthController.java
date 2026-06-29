@@ -24,6 +24,24 @@ public class AuthController {
     @Value("${admin.password}")
     private String adminPassword;
 
+    @GetMapping("/me")
+    public ResponseEntity<?> me(jakarta.servlet.http.HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header == null || !header.startsWith("Bearer ")) {
+            return ResponseEntity.status(401).body(Map.of("error", "No token"));
+        }
+        String username = jwtService.extractUsername(header.substring(7));
+        AppUser user = userRepo.findByUsername(username).orElse(null);
+        if (user == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "User not found"));
+        }
+        return ResponseEntity.ok(Map.of(
+                "userId", user.getId(),
+                "username", user.getUsername(),
+                "isAdmin", Boolean.TRUE.equals(user.getIsAdmin())
+        ));
+    }
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
         String username = body.get("username");
@@ -48,7 +66,7 @@ public class AuthController {
                 "token", token,
                 "userId", user.getId(),
                 "username", user.getUsername(),
-                "isAdmin", true
+                "isAdmin", isAdmin
         ));
     }
 }

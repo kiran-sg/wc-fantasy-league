@@ -4,17 +4,18 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import com.wc.fantasy.model.AppUser;
+import com.wc.fantasy.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-
 import java.io.IOException;
-import java.util.Collection;
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -22,6 +23,7 @@ import java.util.List;
 public class JwtFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -32,9 +34,13 @@ public class JwtFilter extends OncePerRequestFilter {
             try {
                 if (jwtService.isValid(token)) {
                     String username = jwtService.extractUsername(token);
-                    List<GrantedAuthority> authorities = new java.util.ArrayList<>();
-                    if ("superadmin".equals(username)) {
-                        authorities.add(new SimpleGrantedAuthority("ROLE_SUPERADMIN"));
+                    AppUser user = userRepository.findByUsername(username).orElse(null);
+                    List<GrantedAuthority> authorities = new ArrayList<>();
+                    if (user != null && Boolean.TRUE.equals(user.getIsAdmin())) {
+                        authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+                        if ("superadmin".equals(username)) {
+                            authorities.add(new SimpleGrantedAuthority("ROLE_SUPERADMIN"));
+                        }
                     }
                     var auth = new UsernamePasswordAuthenticationToken(username, null, authorities);
                     SecurityContextHolder.getContext().setAuthentication(auth);
