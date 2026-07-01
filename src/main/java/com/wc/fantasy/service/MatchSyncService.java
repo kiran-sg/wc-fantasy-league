@@ -51,15 +51,29 @@ public class MatchSyncService {
             if (syncedTeams.add(teamBName)) syncPlayersForTeam(teamB);
 
             String matchNo = String.valueOf(m.get("matchNo"));
+            LocalDateTime matchTime = parseDateTime((String) m.get("dateTime"));
+
+            // Primary dedup: by matchNo marker in venue
             Match existing = matchRepo.findAll().stream()
                     .filter(ex -> ex.getVenue() != null && ex.getVenue().contains("[#" + matchNo + "]"))
                     .findFirst().orElse(null);
+
+            // Fallback dedup: same two teams on the same day (handles null/missing matchNo)
+            if (existing == null && matchTime != null) {
+                existing = matchRepo.findAll().stream()
+                        .filter(ex -> ex.getTeamA() != null && ex.getTeamB() != null
+                                && ex.getTeamA().getId().equals(teamA.getId())
+                                && ex.getTeamB().getId().equals(teamB.getId())
+                                && ex.getMatchTime() != null
+                                && ex.getMatchTime().toLocalDate().equals(matchTime.toLocalDate()))
+                        .findFirst().orElse(null);
+            }
 
             if (existing == null) {
                 Match match = new Match();
                 match.setTeamA(teamA);
                 match.setTeamB(teamB);
-                match.setMatchTime(parseDateTime((String) m.get("dateTime")));
+                match.setMatchTime(matchTime);
                 match.setVenue(m.get("venue") + " [#" + matchNo + "]");
                 match.setStage(resolveStageFromPayload(m, matchNo));
                 match.setStatus("UPCOMING");
