@@ -554,6 +554,13 @@ public class AdminController {
         return matchRepo.findAll(org.springframework.data.domain.Sort.by("matchTime"));
     }
 
+    // ── Country limit audit ───────────────────────────────────────────────────
+
+    @GetMapping("/country-limit-audit")
+    public List<Map<String, Object>> auditCountryLimits() {
+        return userTeamService.auditCountryLimits();
+    }
+
     // ── Squad position-mismatch audit ─────────────────────────────────────────
 
     /**

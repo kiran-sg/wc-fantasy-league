@@ -118,7 +118,7 @@ public class UserTeamService {
 
         validatePositionQuota(starters, bench, formation);
         validateBudget(all);
-        validateCountryLimit(starters, stage);
+        validateCountryLimit(starters, bench, stage);
 
         // Auto-assign captain = most expensive starter, VC = second most expensive, if not supplied
         List<Player> sortedByPrice = starters.stream()
@@ -406,14 +406,16 @@ public class UserTeamService {
         }
     }
 
-    private void validateCountryLimit(List<Player> starters, String stage) {
+    private void validateCountryLimit(List<Player> starters, List<Player> bench, String stage) {
         int limit = countryLimitFor(stage);
-        Map<Long, Long> countPerTeam = starters.stream()
+        List<Player> all = new ArrayList<>(starters);
+        all.addAll(bench);
+        Map<Long, Long> countPerTeam = all.stream()
                 .collect(Collectors.groupingBy(p -> p.getTeam().getId(), Collectors.counting()));
         countPerTeam.forEach((teamId, count) -> {
             if (count > limit) {
                 throw new IllegalArgumentException(
-                        "Too many players from one country (max " + limit + " for stage " + stage + ")");
+                        "Too many players from one country (max " + limit + " in full squad for stage " + stage + ")");
             }
         });
     }
@@ -424,6 +426,61 @@ public class UserTeamService {
         return teamRepo.findByUserId(userId)
                 .map(team -> matchPointsRepo.findByUserTeamId(team.getId()))
                 .orElse(Collections.emptyList());
+    }
+
+    // ── Country limit audit ───────────────────────────────────────────────────
+
+    public List<Map<String, Object>> auditCountryLimits() {
+        String stage = resolveActiveStage();
+        if (stage == null) stage = "GROUP";
+        int limit = countryLimitFor(stage);
+
+        List<Map<String, Object>> violations = new ArrayList<>();
+        for (UserTeam team : teamRepo.findAll()) {
+            List<Player> all = new ArrayList<>(team.getStarters());
+            all.addAll(team.getBench());
+
+            Map<Long, List<Player>> byCountry = new java.util.LinkedHashMap<>();
+            for (Player p : all) {
+                byCountry.computeIfAbsent(p.getTeam().getId(), k -> new ArrayList<>()).add(p);
+            }
+
+            List<Map<String, Object>> teamViolations = new ArrayList<>();
+            Set<Long> starterIds = team.getStarters().stream()
+                    .map(Player::getId).collect(Collectors.toSet());
+
+            for (Map.Entry<Long, List<Player>> entry : byCountry.entrySet()) {
+                if (entry.getValue().size() > limit) {
+                    List<Map<String, Object>> players = entry.getValue().stream().map(p -> {
+                        Map<String, Object> pm = new java.util.LinkedHashMap<>();
+                        pm.put("id",       p.getId());
+                        pm.put("name",     p.getName());
+                        pm.put("position", p.getPosition());
+                        pm.put("section",  starterIds.contains(p.getId()) ? "STARTER" : "BENCH");
+                        return pm;
+                    }).collect(Collectors.toList());
+
+                    Map<String, Object> v = new java.util.LinkedHashMap<>();
+                    v.put("countryId",   entry.getKey());
+                    v.put("countryName", entry.getValue().get(0).getTeam().getName());
+                    v.put("count",       entry.getValue().size());
+                    v.put("limit",       limit);
+                    v.put("players",     players);
+                    teamViolations.add(v);
+                }
+            }
+
+            if (!teamViolations.isEmpty()) {
+                Map<String, Object> row = new java.util.LinkedHashMap<>();
+                row.put("userId",      team.getUser().getId());
+                row.put("username",    team.getUser().getUsername());
+                row.put("displayName", team.getUser().getDisplayName());
+                row.put("stage",       stage);
+                row.put("violations",  teamViolations);
+                violations.add(row);
+            }
+        }
+        return violations;
     }
 
     // ── Transfer record for a user + stage ───────────────────────────────────
