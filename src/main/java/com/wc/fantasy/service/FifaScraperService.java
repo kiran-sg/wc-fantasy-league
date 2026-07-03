@@ -36,17 +36,14 @@ public class FifaScraperService {
         }
 
         List<Player> allPlayers = playerRepo.findAll();
-        Map<String, Player> byFifaName  = new HashMap<>();
-        Map<String, Player> byLastName  = new HashMap<>();
-        Map<String, Player> byNormFull  = new HashMap<>();
+        Map<String, Player> byFifaName = new HashMap<>();
+        Map<String, Player> byNormFull = new HashMap<>();
 
         for (Player p : allPlayers) {
             if (p.getFifaPlayerName() != null) {
                 byFifaName.put(normalize(p.getFifaPlayerName()), p);
             }
             byNormFull.put(normalize(p.getName()), p);
-            String last = lastName(normalize(p.getName()));
-            if (last.length() > 2) byLastName.putIfAbsent(last, p);
         }
 
         int matched = 0, unmatched = 0;
@@ -84,7 +81,7 @@ public class FifaScraperService {
             if (rawPrice <= 0) continue;
             BigDecimal price = BigDecimal.valueOf(Math.round(rawPrice * 1_000_000));
 
-            Player player = resolvePlayer(fifaName, byFifaName, byNormFull, byLastName);
+            Player player = resolvePlayer(fifaName, byFifaName, byNormFull);
             if (player == null) {
                 unmatched++;
                 unmatchedNames.add(fifaName);
@@ -104,8 +101,7 @@ public class FifaScraperService {
 
     private Player resolvePlayer(String fifaName,
                                   Map<String, Player> byFifaName,
-                                  Map<String, Player> byNormFull,
-                                  Map<String, Player> byLastName) {
+                                  Map<String, Player> byNormFull) {
         String norm = normalize(fifaName);
 
         // 1. Exact fifa_player_name match
@@ -113,17 +109,6 @@ public class FifaScraperService {
 
         // 2. Exact full name match
         if (byNormFull.containsKey(norm)) return byNormFull.get(norm);
-
-        // 3. Last name match (e.g. FIFA "Mbappe" vs ESPN "Kylian Mbappe")
-        String last = lastName(norm);
-        if (last.length() > 2 && byLastName.containsKey(last)) return byLastName.get(last);
-
-        // 4. Partial contains — FIFA may use short name like "Vini Jr." vs "Vinicius Junior"
-        for (Map.Entry<String, Player> e : byNormFull.entrySet()) {
-            if (e.getKey().contains(last) || norm.contains(lastName(e.getKey()))) {
-                return e.getValue();
-            }
-        }
 
         return null;
     }
