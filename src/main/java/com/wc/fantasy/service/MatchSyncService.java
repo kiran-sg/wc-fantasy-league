@@ -58,14 +58,19 @@ public class MatchSyncService {
                     .filter(ex -> ex.getVenue() != null && ex.getVenue().contains("[#" + matchNo + "]"))
                     .findFirst().orElse(null);
 
-            // Fallback dedup: same two teams on the same day (handles null/missing matchNo)
+            // Fallback dedup: same two teams on the same day — compare by normalized name to handle
+            // accent variants (e.g. "México" vs "Mexico") and reversed team order across syncs
             if (existing == null && matchTime != null) {
+                String normA = normalizeTeamName(teamAName);
+                String normB = normalizeTeamName(teamBName);
                 existing = matchRepo.findAll().stream()
                         .filter(ex -> ex.getTeamA() != null && ex.getTeamB() != null
-                                && ex.getTeamA().getId().equals(teamA.getId())
-                                && ex.getTeamB().getId().equals(teamB.getId())
                                 && ex.getMatchTime() != null
-                                && ex.getMatchTime().toLocalDate().equals(matchTime.toLocalDate()))
+                                && ex.getMatchTime().toLocalDate().equals(matchTime.toLocalDate())
+                                && ((normalizeTeamName(ex.getTeamA().getName()).equals(normA)
+                                        && normalizeTeamName(ex.getTeamB().getName()).equals(normB))
+                                    || (normalizeTeamName(ex.getTeamA().getName()).equals(normB)
+                                        && normalizeTeamName(ex.getTeamB().getName()).equals(normA))))
                         .findFirst().orElse(null);
             }
 
@@ -109,8 +114,9 @@ public class MatchSyncService {
     }
 
     private Team getOrCreateTeam(String name, String logoUrl, String group) {
+        String normalizedName = normalizeTeamName(name);
         return teamRepo.findAll().stream()
-                .filter(t -> t.getName().equals(name))
+                .filter(t -> normalizeTeamName(t.getName()).equals(normalizedName))
                 .findFirst()
                 .orElseGet(() -> {
                     Team t = new Team();
@@ -120,6 +126,22 @@ public class MatchSyncService {
                     t.setFlagUrl(logoUrl);
                     return teamRepo.save(t);
                 });
+    }
+
+    private String normalizeTeamName(String name) {
+        if (name == null) return "";
+        String s = name.toLowerCase().trim()
+                .replaceAll("[áàâãä]", "a").replaceAll("[éèêë]", "e")
+                .replaceAll("[íìîï]", "i").replaceAll("[óòôõö]", "o")
+                .replaceAll("[úùûü]", "u").replaceAll("[ñ]", "n");
+        s = s.replace("czechia", "czech republic")
+             .replace("turkiye", "turkey").replace("türkiye", "turkey")
+             .replace("bosnia-herzegovina", "bosnia and herzegovina")
+             .replace("bosnia herzegovina", "bosnia and herzegovina")
+             .replace("cote d'ivoire", "ivory coast").replace("cote divoire", "ivory coast");
+        if (s.contains("korea") && !s.contains("south")) s = "south korea";
+        if (s.contains("united states") || s.equals("usa")) s = "united states";
+        return s;
     }
 
     // Try to read stage/type from prediction API payload, fall back to match-number range.

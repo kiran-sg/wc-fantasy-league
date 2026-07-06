@@ -38,8 +38,8 @@ public class DataSyncService {
     // Dates covering R32 through Final
     private static final List<String> KNOCKOUT_DATES = List.of(
         "20260628","20260629","20260630","20260701","20260702","20260703","20260704",
-        "20260705","20260706","20260707","20260708","20260709",
-        "20260711","20260712","20260713",
+        "20260705","20260706","20260707","20260708","20260709","20260710",
+        "20260711","20260712","20260713","20260714",
         "20260715","20260716",
         "20260718","20260719"
     );
@@ -50,8 +50,8 @@ public class DataSyncService {
         "20260618","20260619","20260620","20260621","20260622","20260623","20260624",
         "20260625","20260626","20260627",
         "20260628","20260629","20260630","20260701","20260702","20260703","20260704",
-        "20260705","20260706","20260707","20260708","20260709",
-        "20260711","20260712","20260713",
+        "20260705","20260706","20260707","20260708","20260709","20260710",
+        "20260711","20260712","20260713","20260714",
         "20260715","20260716",
         "20260718","20260719"
     );
@@ -594,9 +594,9 @@ public class DataSyncService {
         LocalDate d = time.toLocalDate();
         if (!d.isAfter(LocalDate.of(2026, 6, 27))) return "GROUP";
         if (!d.isBefore(LocalDate.of(2026, 6, 28)) && !d.isAfter(LocalDate.of(2026, 7, 4))) return "R32";
-        if (!d.isBefore(LocalDate.of(2026, 7, 5)) && !d.isAfter(LocalDate.of(2026, 7, 9))) return "R16";
+        if (!d.isBefore(LocalDate.of(2026, 7, 5)) && !d.isAfter(LocalDate.of(2026, 7, 10))) return "R16";
         if (!d.isBefore(LocalDate.of(2026, 7, 11)) && !d.isAfter(LocalDate.of(2026, 7, 13))) return "QF";
-        if (!d.isBefore(LocalDate.of(2026, 7, 15)) && !d.isAfter(LocalDate.of(2026, 7, 16))) return "SF";
+        if (!d.isBefore(LocalDate.of(2026, 7, 14)) && !d.isAfter(LocalDate.of(2026, 7, 16))) return "SF";
         return "FINAL";
     }
 
