@@ -217,15 +217,21 @@ public class DataSyncService {
         if (!unreferencedIds.isEmpty()) matchRepo.deleteAllById(unreferencedIds);
         log.info("Deleted {} unreferenced matches, keeping {} referenced", unreferencedIds.size(), referencedIds.size());
 
-        // Index remaining (referenced) matches by ESPN stamp and by matchTime for dedup
-        Map<String, Match> existingByEspnId = new HashMap<>();
+        // Index remaining (referenced) matches by ESPN ID, by matchTime, and by team-pair for dedup
+        Map<String, Match> existingByEspnId  = new HashMap<>();
         Map<LocalDateTime, Match> existingByTime = new HashMap<>();
+        Map<String, Match> existingByTeamPair = new HashMap<>();
         matchRepo.findAll().forEach(ex -> {
             if (ex.getVenue() != null) {
                 java.util.regex.Matcher vm = java.util.regex.Pattern.compile("\\[#espn(\\w+)\\]").matcher(ex.getVenue());
                 if (vm.find()) existingByEspnId.put(vm.group(1), ex);
             }
             if (ex.getMatchTime() != null) existingByTime.putIfAbsent(ex.getMatchTime(), ex);
+            String na = ex.getTeamA() != null ? normalizeTeamName(ex.getTeamA().getName())
+                      : ex.getTeamALabel() != null ? normalizeTeamName(ex.getTeamALabel()) : null;
+            String nb = ex.getTeamB() != null ? normalizeTeamName(ex.getTeamB().getName())
+                      : ex.getTeamBLabel() != null ? normalizeTeamName(ex.getTeamBLabel()) : null;
+            if (na != null && nb != null) existingByTeamPair.putIfAbsent(na + "|" + nb, ex);
         });
 
         int inserted = 0, updated = 0, dateErrors = 0;
@@ -283,16 +289,26 @@ public class DataSyncService {
                         }
                     }
 
-                    // Check if this ESPN event matches an existing referenced row
+                    // Check if this ESPN event matches an existing row.
+                    // Also build a team-pair fallback key to catch cases where kickoff time shifted.
+                    String normHome = normalizeTeamName(homeTeamName);
+                    String normAway = normalizeTeamName(awayTeamName);
+                    String teamPairKey  = normHome + "|" + normAway;
+                    String teamPairKeyR = normAway + "|" + normHome;
+
                     Match existing = existingByEspnId.get(espnId);
                     if (existing == null) existing = existingByTime.get(matchTime);
+                    if (existing == null) existing = existingByTeamPair.get(teamPairKey);
+                    if (existing == null) existing = existingByTeamPair.get(teamPairKeyR);
 
                     if (existing != null) {
                         // Update in-place — preserve FK references
                         existing.setTeamA(teamA);
                         existing.setTeamB(teamB);
                         existing.setMatchTime(matchTime);
-                        existing.setVenue(venue);
+                        // Embed ESPN ID into venue so future syncs find it by espnId
+                        String venueWithId = !espnId.isBlank() ? venue + " [#espn" + espnId + "]" : venue;
+                        existing.setVenue(venueWithId);
                         existing.setStage(stage);
                         if (!"COMPLETED".equals(existing.getStatus())) existing.setStatus(status);
                         if (scoreA != null) existing.setScoreA(scoreA);
@@ -300,13 +316,19 @@ public class DataSyncService {
                         existing.setTeamALabel(teamA == null ? homeTeamName : null);
                         existing.setTeamBLabel(teamB == null ? awayTeamName : null);
                         matchRepo.save(existing);
+                        // Keep dedup maps current so the same event from a second date query is found
+                        if (!espnId.isBlank()) existingByEspnId.put(espnId, existing);
+                        existingByTime.put(matchTime, existing);
+                        existingByTeamPair.put(teamPairKey, existing);
                         updated++;
                     } else {
                         Match match = new Match();
                         match.setTeamA(teamA);
                         match.setTeamB(teamB);
                         match.setMatchTime(matchTime);
-                        match.setVenue(venue);
+                        // Embed ESPN ID into venue so future syncs find it by espnId
+                        String venueWithId = !espnId.isBlank() ? venue + " [#espn" + espnId + "]" : venue;
+                        match.setVenue(venueWithId);
                         match.setStage(stage);
                         match.setStatus(status);
                         if (scoreA != null) match.setScoreA(scoreA);
@@ -314,6 +336,10 @@ public class DataSyncService {
                         if (teamA == null) match.setTeamALabel(homeTeamName);
                         if (teamB == null) match.setTeamBLabel(awayTeamName);
                         matchRepo.save(match);
+                        // Update dedup maps immediately so the same event from a second date query is caught
+                        if (!espnId.isBlank()) existingByEspnId.put(espnId, match);
+                        existingByTime.put(matchTime, match);
+                        existingByTeamPair.put(teamPairKey, match);
                         log.info("Inserted {} match: {} vs {} at {}", stage, homeTeamName, awayTeamName, matchTime);
                         inserted++;
                     }
