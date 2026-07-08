@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.*;
@@ -28,6 +29,7 @@ public class UserTeamService {
     private final UserTransferRecordRepository transferRecordRepo;
     private final RoundConfigRepository roundConfigRepo;
     private final UserTeamSnapshotRepository snapshotRepo;
+    private final MatchRepository matchRepo;
 
     private static final BigDecimal BUDGET = BigDecimal.valueOf(105_000_000);
     private static final int UNLIMITED = Integer.MAX_VALUE;
@@ -66,14 +68,45 @@ public class UserTeamService {
     private void assertTransferWindowOpen(String stage) {
         RoundConfig c = configFor(stage);
         if (c == null) return; // no config row → no window restriction
+
         ZoneId tz = ZoneId.of(c.getWindowTimezone());
-        int hour = ZonedDateTime.now(tz).getHour();
-        if (hour < c.getWindowOpenHour() || hour >= c.getWindowCloseHour()) {
-            throw new IllegalStateException(
-                    "Transfer window is closed. Transfers are only allowed between "
-                    + c.getWindowOpenHour() + ":00 and " + c.getWindowCloseHour() + ":00 "
-                    + c.getWindowTimezone() + ".");
+        ZonedDateTime now = ZonedDateTime.now(tz);
+
+        // Find the next upcoming match (non-GROUP, future kickoff)
+        List<Match> upcoming = matchRepo.findByStatusOrderByMatchTimeAsc("UPCOMING").stream()
+                .filter(m -> !"GROUP".equals(m.getStage()))
+                .toList();
+        if (upcoming.isEmpty()) return; // no upcoming match → window always open
+
+        // matchTime is stored as IST (LocalDateTime in Asia/Kolkata)
+        ZonedDateTime matchTime = upcoming.get(0).getMatchTime().atZone(tz);
+
+        // lockDay = day before match if match starts before closeHour, else same day as match
+        LocalDate matchDate = matchTime.toLocalDate();
+        LocalDate lockDay   = matchTime.getHour() < c.getWindowCloseHour()
+                ? matchDate.minusDays(1)
+                : matchDate;
+
+        LocalDate today = now.toLocalDate();
+
+        if (today.isBefore(lockDay)) return; // days before lockDay → fully open
+
+        if (today.isEqual(lockDay)) {
+            int hour = now.getHour();
+            if (hour >= c.getWindowOpenHour() && hour < c.getWindowCloseHour()) return; // open window
+            if (hour < c.getWindowOpenHour()) {
+                throw new IllegalStateException(
+                        "Transfer window hasn't opened yet today. Opens at "
+                        + c.getWindowOpenHour() + ":00 " + c.getWindowTimezone() + ".");
+            }
+            // hour >= closeHour → fall through to locked
         }
+
+        // today > lockDay or today == lockDay after closeHour → locked
+        throw new IllegalStateException(
+                "Transfer window is closed. Locked from "
+                + lockDay + " " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone()
+                + " until after the next match.");
     }
 
     // ── Get team ──────────────────────────────────────────────────────────────
