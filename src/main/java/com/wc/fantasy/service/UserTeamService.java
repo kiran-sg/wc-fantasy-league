@@ -106,11 +106,15 @@ public class UserTeamService {
                 ? nextMatchTime.toLocalDate().minusDays(1)
                 : nextMatchTime.toLocalDate();
 
-        String lockMsg = "Closes " + lockDay + " at " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone();
+        String tzLabel = now.getZone().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH);
+        String lockMsg = "Closes " + lockDay + " at " + fmt12h(c.getWindowCloseHour()) + " " + tzLabel;
 
-        // Determine case based on fifaRoundStart
-        LocalDateTime fifaStart = c.getFifaRoundStart();
-        boolean fifaNotYetStarted = fifaStart == null || now.toLocalDateTime().isBefore(fifaStart);
+        // fifaRoundStart is stored as IST wall-clock LocalDateTime (same as matchTime).
+        // now is ZonedDateTime in the round's windowTimezone — must also be IST for this comparison to be correct.
+        // All round configs use Asia/Kolkata so this holds; comparing as LocalDateTime is safe.
+        LocalDateTime fifaStart    = c.getFifaRoundStart();
+        LocalDateTime nowLocal     = now.toLocalDateTime(); // wall-clock in windowTimezone (IST)
+        boolean fifaNotYetStarted  = fifaStart == null || nowLocal.isBefore(fifaStart);
 
         if (fifaNotYetStarted) {
             // Case A or B — depends on previous round's isRoundClosed
@@ -138,20 +142,28 @@ public class UserTeamService {
         if (today.isEqual(lockDay)) {
             if (now.getHour() < c.getWindowCloseHour()) return WindowStatus.open(lockMsg);
         }
-        return WindowStatus.closed("Transfer window is closed. Locked after " + lockDay + " " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone() + ".");
+        String tzLabelB = now.getZone().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH);
+        return WindowStatus.closed("Transfer window is closed. Locked after " + lockDay + " " + fmt12h(c.getWindowCloseHour()) + " " + tzLabelB + ".");
     }
 
     // Case C: must be on lockDay within [windowOpenHour, windowCloseHour), or before lockDay
     private WindowStatus checkOpenAndCloseHour(ZonedDateTime now, LocalDate lockDay, RoundConfig c, ZoneId tz, String lockMsg) {
+        String tzLabel = now.getZone().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH);
         LocalDate today = now.toLocalDate();
         if (today.isBefore(lockDay)) return WindowStatus.open(lockMsg);
         if (today.isEqual(lockDay)) {
             int hour = now.getHour();
             if (hour >= c.getWindowOpenHour() && hour < c.getWindowCloseHour()) return WindowStatus.open(lockMsg);
             if (hour < c.getWindowOpenHour()) return WindowStatus.closed(
-                    "Transfer window hasn't opened yet today. Opens at " + c.getWindowOpenHour() + ":00 " + c.getWindowTimezone() + ".");
+                    "Transfer window hasn't opened yet today. Opens at " + fmt12h(c.getWindowOpenHour()) + " " + tzLabel + ".");
         }
-        return WindowStatus.closed("Transfer window is closed. Locked after " + lockDay + " " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone() + ".");
+        return WindowStatus.closed("Transfer window is closed. Locked after " + lockDay + " " + fmt12h(c.getWindowCloseHour()) + " " + tzLabel + ".");
+    }
+
+    private static String fmt12h(int hour24) {
+        int h = hour24 % 12;
+        if (h == 0) h = 12;
+        return h + ":00 " + (hour24 < 12 ? "AM" : "PM");
     }
 
     public record WindowStatus(boolean isOpen, String message) {
