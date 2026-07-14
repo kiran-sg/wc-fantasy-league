@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -16,14 +17,18 @@ public class LeaderboardService {
     private final UserRepository userRepo;
 
     public List<LeaderboardEntry> getOverallLeaderboard() {
-        List<AppUser> users = userRepo.findLeaderboardWithPoints();
-        List<LeaderboardEntry> entries = new ArrayList<>(users.size());
+        List<AppUser> users = userRepo.findLeaderboardCandidates();
+        List<LeaderboardEntry> entries = users.stream()
+                .map(u -> new LeaderboardEntry(0, u))
+                .sorted(Comparator.comparingInt(LeaderboardEntry::getFinalPoints).reversed())
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
         int rank = 1;
-        for (int i = 0; i < users.size(); i++) {
-            if (i > 0 && users.get(i).getTotalPoints() < users.get(i - 1).getTotalPoints()) {
+        for (int i = 0; i < entries.size(); i++) {
+            if (i > 0 && entries.get(i).getFinalPoints() < entries.get(i - 1).getFinalPoints()) {
                 rank = i + 1;
             }
-            entries.add(new LeaderboardEntry(rank, users.get(i)));
+            entries.get(i).setRank(rank);
         }
         return entries;
     }

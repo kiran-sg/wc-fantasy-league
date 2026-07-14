@@ -15,6 +15,9 @@ public class AppUser {
     private String displayName;
     private Integer totalPoints = 0;
 
+    @Column(name = "missed_points", nullable = false, columnDefinition = "integer default 0")
+    private Integer missedPoints = 0;
+
     @Column(name = "is_admin", nullable = false, columnDefinition = "boolean default false")
     private Boolean isAdmin = false;
 

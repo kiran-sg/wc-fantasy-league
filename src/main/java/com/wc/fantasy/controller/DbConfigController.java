@@ -36,7 +36,7 @@ public class DbConfigController {
             tableInfo("players",              "Players",              List.of("id","name","position","team","team_id","jerseyNumber","price","fifaPlayerName")),
             tableInfo("matches",              "Matches",              List.of("id","teamA","teamA_id","teamB","teamB_id","matchTime","venue","stage","status","scoreA","scoreB","teamALabel","teamBLabel","matchNumber")),
             tableInfo("match_player_stats",   "Match Player Stats",   List.of("id","match","match_id","player","player_id","goals","assists","yellowCards","redCards","ownGoals","cleanSheet","goalsConceded","minutesPlayed","saves","shotsOnTarget","totalPoints")),
-            tableInfo("app_users",            "Users",                List.of("id","username","displayName","totalPoints","isAdmin","location")),
+            tableInfo("app_users",            "Users",                List.of("id","username","displayName","totalPoints","missedPoints","isAdmin","location")),
             tableInfo("user_transfer_records","Transfer Records",     List.of("id","user","user_id","stage","transfersMade","penaltyPoints")),
             tableInfo("round_config",         "Round Config",         List.of("stage","freeTransfers","countryLimit","windowOpenHour","windowCloseHour","windowTimezone","roundStart"))
         );
@@ -190,7 +190,7 @@ public class DbConfigController {
             .map(u -> {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("id", u.getId()); m.put("username", u.getUsername()); m.put("displayName", u.getDisplayName());
-                m.put("totalPoints", u.getTotalPoints()); m.put("isAdmin", u.getIsAdmin()); m.put("location", u.getLocation());
+                m.put("totalPoints", u.getTotalPoints()); m.put("missedPoints", u.getMissedPoints()); m.put("isAdmin", u.getIsAdmin()); m.put("location", u.getLocation());
                 return m;
             }).toList();
     }
@@ -287,8 +287,9 @@ public class DbConfigController {
         AppUser u = userRepo.findById(id).orElseThrow();
         if (f.containsKey("username"))     u.setUsername(str(f, "username"));
         if (f.containsKey("displayName"))  u.setDisplayName(str(f, "displayName"));
-        if (f.containsKey("totalPoints"))  u.setTotalPoints(intVal(f, "totalPoints"));
-        if (f.containsKey("isAdmin"))      u.setIsAdmin(bool(f, "isAdmin"));
+        if (f.containsKey("totalPoints"))   u.setTotalPoints(intVal(f, "totalPoints"));
+        if (f.containsKey("missedPoints"))  u.setMissedPoints(intVal(f, "missedPoints"));
+        if (f.containsKey("isAdmin"))       u.setIsAdmin(bool(f, "isAdmin"));
         if (f.containsKey("location"))     u.setLocation(str(f, "location"));
         userRepo.save(u);
         return Map.of("status", "ok");
