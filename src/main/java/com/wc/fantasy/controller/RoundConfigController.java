@@ -35,6 +35,28 @@ public class RoundConfigController {
         return ResponseEntity.ok(active);
     }
 
+    // Public — current transfer window open/closed state with reason message
+    @GetMapping("/window-status")
+    public ResponseEntity<Map<String, Object>> getWindowStatus() {
+        RoundConfig active = teamService.getActiveRoundConfig();
+        String stage = active != null ? active.getStage() : "GROUP";
+        UserTeamService.WindowStatus status = teamService.computeWindowStatus(stage);
+        return ResponseEntity.ok(Map.of(
+                "open",    status.isOpen(),
+                "message", status.message(),
+                "stage",   stage
+        ));
+    }
+
+    // Admin — toggle isRoundClosed for a stage
+    @PatchMapping("/{stage}/close")
+    public ResponseEntity<?> setRoundClosed(@PathVariable String stage, @RequestBody Map<String, Object> body) {
+        return repo.findById(stage.toUpperCase()).map(rc -> {
+            rc.setIsRoundClosed(Boolean.parseBoolean(body.getOrDefault("isRoundClosed", "false").toString()));
+            return ResponseEntity.ok(repo.save(rc));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
     @GetMapping("/{stage}")
     public ResponseEntity<RoundConfig> getOne(@PathVariable String stage) {
         return repo.findById(stage.toUpperCase())
@@ -54,7 +76,7 @@ public class RoundConfigController {
         return repo.findAll();
     }
 
-    // Admin — update a round's rules + roundStart without redeploying
+    // Admin — update a round's rules + roundStart + fifaRoundStart without redeploying
     @PutMapping("/{stage}")
     public ResponseEntity<RoundConfig> update(@PathVariable String stage, @RequestBody RoundConfig incoming) {
         return repo.findById(stage.toUpperCase()).map(existing -> {
@@ -63,7 +85,9 @@ public class RoundConfigController {
             existing.setWindowOpenHour(incoming.getWindowOpenHour());
             existing.setWindowCloseHour(incoming.getWindowCloseHour());
             existing.setWindowTimezone(incoming.getWindowTimezone());
-            existing.setRoundStart(incoming.getRoundStart()); // may be null to clear
+            existing.setRoundStart(incoming.getRoundStart());
+            existing.setFifaRoundStart(incoming.getFifaRoundStart());
+            // isRoundClosed is intentionally not settable via PUT — use PATCH /{stage}/close
             return ResponseEntity.ok(repo.save(existing));
         }).orElse(ResponseEntity.notFound().build());
     }

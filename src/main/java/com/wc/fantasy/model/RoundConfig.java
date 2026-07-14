@@ -31,4 +31,12 @@ public class RoundConfig {
     // First match kickoff of this round (UTC). Active stage = latest row where roundStart <= now.
     // Null = round not yet scheduled; treated as not yet active.
     private LocalDateTime roundStart;
+
+    // Actual FIFA first-match kickoff for this round (IST). Used to determine Case B vs Case C window logic.
+    private LocalDateTime fifaRoundStart;
+
+    // Admin-set: true once this round's scores are settled. Immediately closes the transfer window for this round
+    // and (when set on the previous round) opens the next round's window unconditionally.
+    @Column(columnDefinition = "boolean default false")
+    private Boolean isRoundClosed = false;
 }

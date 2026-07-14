@@ -14,9 +14,17 @@ public interface RoundConfigRepository extends JpaRepository<RoundConfig, String
     java.util.List<RoundConfig> findStartedRounds(LocalDateTime now);
 
     default Optional<RoundConfig> findActiveRound() {
-        // roundStart is stored as IST (matchTime is converted to IST on sync) — compare in IST
         var now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
         var started = findStartedRounds(now);
         return started.isEmpty() ? Optional.empty() : Optional.of(started.get(0));
+    }
+
+    default Optional<RoundConfig> findPreviousRound(String currentStage) {
+        // Canonical knockout stage order — does not include GROUP (no previous round before R32)
+        java.util.List<String> ORDER = java.util.List.of("R32", "R16", "QF", "SF", "FINAL");
+        int idx = ORDER.indexOf(currentStage.toUpperCase());
+        if (idx <= 0) return Optional.empty(); // R32 has no previous knockout round
+        String prevStage = ORDER.get(idx - 1);
+        return findById(prevStage);
     }
 }

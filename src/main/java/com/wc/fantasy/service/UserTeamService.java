@@ -10,6 +10,7 @@ import java.util.ArrayList;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.*;
@@ -65,48 +66,97 @@ public class UserTeamService {
         return c != null ? c.getCountryLimit() : DEFAULT_COUNTRY_LIMIT.getOrDefault(stage, 3);
     }
 
+    /**
+     * Window logic (all times in round's configured timezone):
+     *
+     * Case D — current round isRoundClosed=true → CLOSED
+     * Case A — fifaRoundStart > now AND previous round isRoundClosed=false → CLOSED (prev round unsettled)
+     * Case B — fifaRoundStart > now AND previous round isRoundClosed=true  → open immediately, close at windowCloseHour on lockDay
+     * Case C — fifaRoundStart <= now AND current isRoundClosed=false        → open at windowOpenHour, close at windowCloseHour on lockDay
+     *
+     * lockDay = day before next upcoming match if match starts before windowCloseHour, else same day as match.
+     */
     private void assertTransferWindowOpen(String stage) {
+        WindowStatus status = computeWindowStatus(stage);
+        if (!status.isOpen()) {
+            throw new IllegalStateException(status.message());
+        }
+    }
+
+    public WindowStatus computeWindowStatus(String stage) {
         RoundConfig c = configFor(stage);
-        if (c == null) return; // no config row → no window restriction
+        if (c == null) return WindowStatus.open("No config — window unrestricted");
 
         ZoneId tz = ZoneId.of(c.getWindowTimezone());
         ZonedDateTime now = ZonedDateTime.now(tz);
 
-        // Find the next upcoming match (non-GROUP, future kickoff)
+        // Case D — current round is closed by admin
+        if (Boolean.TRUE.equals(c.getIsRoundClosed())) {
+            return WindowStatus.closed("Transfer window is closed. Round " + stage + " has been settled.");
+        }
+
+        // Find next upcoming non-GROUP match
         List<Match> upcoming = matchRepo.findByStatusOrderByMatchTimeAsc("UPCOMING").stream()
                 .filter(m -> !"GROUP".equals(m.getStage()))
                 .toList();
-        if (upcoming.isEmpty()) return; // no upcoming match → window always open
+        if (upcoming.isEmpty()) return WindowStatus.open("No upcoming matches — window open");
 
-        // matchTime is stored as IST (LocalDateTime in Asia/Kolkata)
-        ZonedDateTime matchTime = upcoming.get(0).getMatchTime().atZone(tz);
+        ZonedDateTime nextMatchTime = upcoming.get(0).getMatchTime().atZone(tz);
+        LocalDate lockDay = nextMatchTime.getHour() < c.getWindowCloseHour()
+                ? nextMatchTime.toLocalDate().minusDays(1)
+                : nextMatchTime.toLocalDate();
 
-        // lockDay = day before match if match starts before closeHour, else same day as match
-        LocalDate matchDate = matchTime.toLocalDate();
-        LocalDate lockDay   = matchTime.getHour() < c.getWindowCloseHour()
-                ? matchDate.minusDays(1)
-                : matchDate;
+        String lockMsg = "Closes " + lockDay + " at " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone();
 
-        LocalDate today = now.toLocalDate();
+        // Determine case based on fifaRoundStart
+        LocalDateTime fifaStart = c.getFifaRoundStart();
+        boolean fifaNotYetStarted = fifaStart == null || now.toLocalDateTime().isBefore(fifaStart);
 
-        if (today.isBefore(lockDay)) return; // days before lockDay → fully open
+        if (fifaNotYetStarted) {
+            // Case A or B — depends on previous round's isRoundClosed
+            Optional<RoundConfig> prev = roundConfigRepo.findPreviousRound(stage);
+            boolean prevClosed = prev.map(p -> Boolean.TRUE.equals(p.getIsRoundClosed())).orElse(true);
 
-        if (today.isEqual(lockDay)) {
-            int hour = now.getHour();
-            if (hour >= c.getWindowOpenHour() && hour < c.getWindowCloseHour()) return; // open window
-            if (hour < c.getWindowOpenHour()) {
-                throw new IllegalStateException(
-                        "Transfer window hasn't opened yet today. Opens at "
-                        + c.getWindowOpenHour() + ":00 " + c.getWindowTimezone() + ".");
+            if (!prevClosed) {
+                // Case A — previous round not settled yet
+                return WindowStatus.closed(
+                        "Transfer window not yet open. Previous round (" + prev.map(RoundConfig::getStage).orElse("?") + ") is not settled yet.");
             }
-            // hour >= closeHour → fall through to locked
+
+            // Case B — previous round settled, open immediately until windowCloseHour on lockDay
+            return checkCloseHourOnly(now, lockDay, c, tz, lockMsg);
         }
 
-        // today > lockDay or today == lockDay after closeHour → locked
-        throw new IllegalStateException(
-                "Transfer window is closed. Locked from "
-                + lockDay + " " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone()
-                + " until after the next match.");
+        // Case C — FIFA round has started, current round not closed
+        return checkOpenAndCloseHour(now, lockDay, c, tz, lockMsg);
+    }
+
+    // Case B: no open-hour restriction — only check we're before lockDay closeHour
+    private WindowStatus checkCloseHourOnly(ZonedDateTime now, LocalDate lockDay, RoundConfig c, ZoneId tz, String lockMsg) {
+        LocalDate today = now.toLocalDate();
+        if (today.isBefore(lockDay)) return WindowStatus.open(lockMsg);
+        if (today.isEqual(lockDay)) {
+            if (now.getHour() < c.getWindowCloseHour()) return WindowStatus.open(lockMsg);
+        }
+        return WindowStatus.closed("Transfer window is closed. Locked after " + lockDay + " " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone() + ".");
+    }
+
+    // Case C: must be on lockDay within [windowOpenHour, windowCloseHour), or before lockDay
+    private WindowStatus checkOpenAndCloseHour(ZonedDateTime now, LocalDate lockDay, RoundConfig c, ZoneId tz, String lockMsg) {
+        LocalDate today = now.toLocalDate();
+        if (today.isBefore(lockDay)) return WindowStatus.open(lockMsg);
+        if (today.isEqual(lockDay)) {
+            int hour = now.getHour();
+            if (hour >= c.getWindowOpenHour() && hour < c.getWindowCloseHour()) return WindowStatus.open(lockMsg);
+            if (hour < c.getWindowOpenHour()) return WindowStatus.closed(
+                    "Transfer window hasn't opened yet today. Opens at " + c.getWindowOpenHour() + ":00 " + c.getWindowTimezone() + ".");
+        }
+        return WindowStatus.closed("Transfer window is closed. Locked after " + lockDay + " " + c.getWindowCloseHour() + ":00 " + c.getWindowTimezone() + ".");
+    }
+
+    public record WindowStatus(boolean isOpen, String message) {
+        static WindowStatus open(String msg)   { return new WindowStatus(true,  msg); }
+        static WindowStatus closed(String msg) { return new WindowStatus(false, msg); }
     }
 
     // ── Get team ──────────────────────────────────────────────────────────────
