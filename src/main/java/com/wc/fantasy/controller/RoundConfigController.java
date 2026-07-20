@@ -42,9 +42,10 @@ public class RoundConfigController {
         String stage = active != null ? active.getStage() : "GROUP";
         UserTeamService.WindowStatus status = teamService.computeWindowStatus(stage);
         return ResponseEntity.ok(Map.of(
-                "open",    status.isOpen(),
-                "message", status.message(),
-                "stage",   stage
+                "open",           status.isOpen(),
+                "message",        status.message(),
+                "stage",          stage,
+                "leagueFinished", status.leagueFinished()
         ));
     }
 

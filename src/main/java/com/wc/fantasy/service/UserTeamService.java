@@ -92,6 +92,9 @@ public class UserTeamService {
 
         // Case D — current round is closed by admin
         if (Boolean.TRUE.equals(c.getIsRoundClosed())) {
+            if ("FINAL".equals(stage)) {
+                return WindowStatus.leagueFinished("The season has ended. Squads are locked.");
+            }
             return WindowStatus.closed("Transfer window is closed. Round " + stage + " has been settled.");
         }
 
@@ -166,9 +169,10 @@ public class UserTeamService {
         return h + ":00 " + (hour24 < 12 ? "AM" : "PM");
     }
 
-    public record WindowStatus(boolean isOpen, String message) {
-        static WindowStatus open(String msg)   { return new WindowStatus(true,  msg); }
-        static WindowStatus closed(String msg) { return new WindowStatus(false, msg); }
+    public record WindowStatus(boolean isOpen, String message, boolean leagueFinished) {
+        static WindowStatus open(String msg)   { return new WindowStatus(true,  msg, false); }
+        static WindowStatus closed(String msg) { return new WindowStatus(false, msg, false); }
+        static WindowStatus leagueFinished(String msg) { return new WindowStatus(false, msg, true); }
     }
 
     // ── Get team ──────────────────────────────────────────────────────────────
